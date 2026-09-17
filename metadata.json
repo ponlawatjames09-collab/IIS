@@ -1,0 +1,6 @@
+{
+  "name": "Service Job Hub",
+  "description": "A comprehensive service job logging and dashboard system integrated with Google Sheets, Google Drive, PDF generation, and real-time workload analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
