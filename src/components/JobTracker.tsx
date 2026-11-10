@@ -26,6 +26,9 @@ export default function JobTracker({
   const [searchTerm, setSearchTerm] = useState(() => {
     return localStorage.getItem('job_tracker_search_term') || '';
   });
+  const [searchSN, setSearchSN] = useState(() => {
+    return localStorage.getItem('job_tracker_search_sn') || '';
+  });
   const [filterType, setFilterType] = useState<string>('All');
   const [filterStatus, setFilterStatus] = useState<string>('All');
   const [filterHospital, setFilterHospital] = useState<string>('All');
@@ -104,10 +107,20 @@ export default function JobTracker({
   };
 
   const filteredJobs = jobs.filter((job, idx) => {
-    const matchesSearch = 
-      job.jobNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      job.hospitalName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      ([job.engineerName, job.engineer2, job.engineer3, job.engineer4].some(e => e && e.toLowerCase().includes(searchTerm.toLowerCase())));
+    const cleanSearch = searchTerm.trim().toLowerCase();
+    const matchesSearch = !cleanSearch ||
+      job.jobNumber.toLowerCase().includes(cleanSearch) ||
+      job.hospitalName.toLowerCase().includes(cleanSearch) ||
+      (job.serialNumber && job.serialNumber.toLowerCase().includes(cleanSearch)) ||
+      (job.equipmentName && job.equipmentName.toLowerCase().includes(cleanSearch)) ||
+      ([job.engineerName, job.engineer2, job.engineer3, job.engineer4].some(e => e && e.toLowerCase().includes(cleanSearch)));
+
+    const cleanSN = searchSN.trim().toLowerCase();
+    const matchesSN = !cleanSN ||
+      (job.serialNumber && job.serialNumber.toLowerCase().includes(cleanSN)) ||
+      (job.sparePartSerial && job.sparePartSerial.toLowerCase().includes(cleanSN)) ||
+      (job.sparePartSerial2 && job.sparePartSerial2.toLowerCase().includes(cleanSN)) ||
+      (job.sparePartSerial3 && job.sparePartSerial3.toLowerCase().includes(cleanSN));
 
     const matchesType = filterType === 'All' || job.jobType === filterType;
     const matchesStatus = filterStatus === 'All' || job.jobStatus === filterStatus;
@@ -142,7 +155,7 @@ export default function JobTracker({
       return true;
     })();
 
-    return matchesSearch && matchesType && matchesStatus && matchesHospital && matchesEngineer && matchesWarranty && matchesBilling && matchesDate;
+    return matchesSearch && matchesSN && matchesType && matchesStatus && matchesHospital && matchesEngineer && matchesWarranty && matchesBilling && matchesDate;
   }).sort((a, b) => {
     // Sort by Job Number
     const parseJobNum = (jNum: string) => {
@@ -293,7 +306,7 @@ export default function JobTracker({
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search Job Number, Hospital Name, or Engineer Name..."
+                  placeholder="Search Job Number, Hospital, Equipment, or Engineer..."
                   value={searchTerm}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -303,6 +316,40 @@ export default function JobTracker({
                   className="w-full pl-8 pr-2 min-h-[44px] md:min-h-0 py-2 md:py-1.5 bg-slate-50 border border-slate-300 rounded text-sm md:text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white focus:border-blue-500"
                 />
               </div>
+
+              {/* S/N Search Box */}
+              <div className="w-full sm:w-56 relative flex items-center">
+                <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+                  <span className="text-[10px] font-bold font-mono text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded shadow-2xs">
+                    S/N:
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search S/N..."
+                  value={searchSN}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSearchSN(val);
+                    localStorage.setItem('job_tracker_search_sn', val);
+                  }}
+                  className="w-full pl-13 pr-7 min-h-[44px] md:min-h-0 py-2 md:py-1.5 bg-slate-50 border border-slate-300 rounded text-sm md:text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white focus:border-blue-500 font-mono"
+                />
+                {searchSN && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchSN('');
+                      localStorage.removeItem('job_tracker_search_sn');
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-sm font-bold w-5 h-5 flex items-center justify-center rounded-full hover:bg-slate-200 cursor-pointer"
+                    title="Clear S/N"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+
               <div className="flex gap-2">
                 <button
                   onClick={handleExportExcel}
@@ -317,10 +364,14 @@ export default function JobTracker({
                   onClick={() => {
                     setSearchTerm('');
                     localStorage.removeItem('job_tracker_search_term');
+                    setSearchSN('');
+                    localStorage.removeItem('job_tracker_search_sn');
                     setFilterType('All');
                     setFilterStatus('All');
                     setFilterHospital('All');
                     setFilterEngineer('All');
+                    setFilterWarranty('All');
+                    setFilterBilling('All');
                     setDateRange({ start: '', end: '' });
                   }}
                   className="px-3 min-h-[44px] md:min-h-0 py-2 md:py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-600 rounded text-sm md:text-xs font-bold cursor-pointer shrink-0 transition-colors"

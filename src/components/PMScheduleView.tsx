@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PMScheduleItem, SystemSettings, ServiceJob } from '../types';
 import { fetchPMScheduleRecords, fetchYearlyJobs } from '../sheetsService';
-import { RefreshCw, CalendarDays, AlertCircle, FileSpreadsheet, Search, Loader2, List, Calendar as CalendarIcon, X, ChevronDown } from 'lucide-react';
+import { RefreshCw, CalendarDays, AlertCircle, FileSpreadsheet, Search, Loader2, List, Calendar as CalendarIcon, X, ChevronDown, MapPin } from 'lucide-react';
 import PMCalendarView from './PMCalendarView';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -10,9 +10,10 @@ interface PMScheduleViewProps {
   accessToken: string | null;
   yearlyJobs?: ServiceJob[];
   onOpenPMJob?: (hospitalName: string, model: string, sn: string, pmCycle: string, iteration: string, totalPMs?: string, product?: string) => void;
+  onNavigateToMap?: () => void;
 }
 
-export default function PMScheduleView({ settings, accessToken, onOpenPMJob, yearlyJobs }: PMScheduleViewProps) {
+export default function PMScheduleView({ settings, accessToken, onOpenPMJob, yearlyJobs, onNavigateToMap }: PMScheduleViewProps) {
   const targetSpreadsheetId = settings.pmSpreadsheetId || settings.spreadsheetId;
   const [records, setRecords] = useState<PMScheduleItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -223,6 +224,16 @@ export default function PMScheduleView({ settings, accessToken, onOpenPMJob, yea
               <CalendarIcon className="w-3.5 h-3.5" />
               <span>Calendar View</span>
             </button>
+            {onNavigateToMap && (
+              <button
+                onClick={onNavigateToMap}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-md transition-colors text-slate-600 hover:text-blue-700 hover:bg-white"
+                title="เปิดดูตำแหน่งเครื่องบนแผนที่ประเทศไทยแยกตามภาค"
+              >
+                <MapPin className="w-3.5 h-3.5 text-rose-500" />
+                <span>Hospital Map</span>
+              </button>
+            )}
           </div>
         </div>
         <button 

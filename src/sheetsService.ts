@@ -5,13 +5,50 @@ const HEADERS = [
   "Hospital Name", "Department", "Equipment Name", "Serial Number", "Equipment Type", 
   "Problem Description", "Safety Q1", "Safety Q2", "Customer Name", "Customer Phone", 
   "Building Floor", "Engineer Name", "Service Date", "Warranty Status", "Remark", 
-  "Document Status", "Revenue", "Cost", "Product", "Is Repair", "Is Complain", "Spare Parts", "Spare Part Serial/12NC", "Spare Part Description", "Spare Part Remark", "Billing Status", "Engineer 2", "Engineer 3", "Engineer 4", "Spare Parts 2", "Spare Part 2 Serial/12NC", "Spare Part 2 Description", "Spare Part 2 Remark", "Spare Parts 3", "Spare Part 3 Serial/12NC", "Spare Part 3 Description", "Spare Part 3 Remark"
+  "Document Status", "Revenue", "Cost", "Product", "Is Repair", "Is Complain", "Spare Parts", "Spare Part Serial/12NC", "Spare Part Description", "Spare Part Remark", "Billing Status", "Engineer 2", "Engineer 3", "Engineer 4", "Spare Parts 2", "Spare Part 2 Serial/12NC", "Spare Part 2 Description", "Spare Part 2 Remark", "Travel Time Start", "Travel Time Stop", "Process Time Start", "Process Time Stop", "Process Description", "Spare Parts 3", "Spare Part 3 Serial/12NC", "Spare Part 3 Description", "Spare Part 3 Remark"
 ];
 
 export const MONTHS = [
   "JAN2026", "FEB2026", "MAR2026", "APR2026", "MAY2026", "JUN2026",
   "JUL2026", "AUG2026", "SEP2026", "OCT2026", "NOV2026", "DEC2026"
 ];
+
+export const normalize24hTime = (val: any): string => {
+  if (!val) return '';
+  const str = String(val).trim();
+  if (!str) return '';
+
+  // Case 1: HH:mm (e.g. 13:00, 08:30)
+  if (/^\d{1,2}:\d{2}$/.test(str)) {
+    const [h, m] = str.split(':');
+    return `${h.padStart(2, '0')}:${m}`;
+  }
+
+  // Case 2: HH:mm:ss (e.g. 13:00:00)
+  if (/^\d{1,2}:\d{2}:\d{2}$/.test(str)) {
+    const [h, m] = str.split(':');
+    return `${h.padStart(2, '0')}:${m}`;
+  }
+
+  // Case 3: 12-hour AM/PM (e.g. 1:00 PM, 01:00:00 PM, 1:30:00 AM)
+  const ampmMatch = str.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
+  if (ampmMatch) {
+    let h = parseInt(ampmMatch[1], 10);
+    const m = ampmMatch[2];
+    const isPM = ampmMatch[3].toUpperCase() === 'PM';
+    if (isPM && h < 12) h += 12;
+    if (!isPM && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${m}`;
+  }
+
+  // Case 4: 3 or 4 digits without colon (e.g. "830" -> "08:30", "1300" -> "13:00")
+  if (/^\d{3,4}$/.test(str)) {
+    const padded = str.padStart(4, '0');
+    return `${padded.slice(0, 2)}:${padded.slice(2)}`;
+  }
+
+  return str;
+};
 
 export const mapRowToJob = (row: any[]): ServiceJob => {
   const rawJobType = row[4] ? String(row[4]) : '-- Select --';
@@ -63,10 +100,15 @@ export const mapRowToJob = (row: any[]): ServiceJob => {
     sparePartSerial2: row[35] ? String(row[35]) : '',
     sparePartDescription2: row[36] ? String(row[36]) : '',
     sparePartRemark2: row[37] ? String(row[37]) : '',
-    spareParts3: row[38] ? String(row[38]) : '',
-    sparePartSerial3: row[39] ? String(row[39]) : '',
-    sparePartDescription3: row[40] ? String(row[40]) : '',
-    sparePartRemark3: row[41] ? String(row[41]) : '',
+    travelTimeStart: normalize24hTime(row[38] || row[42] || ''),
+    travelTimeStop: normalize24hTime(row[39] || row[43] || ''),
+    processTimeStart: normalize24hTime(row[40] || row[44] || ''),
+    processTimeStop: normalize24hTime(row[41] || row[45] || ''),
+    processDescription: row[42] ? String(row[42]) : (row[46] ? String(row[46]) : ''),
+    spareParts3: row[43] ? String(row[43]) : '',
+    sparePartSerial3: row[44] ? String(row[44]) : '',
+    sparePartDescription3: row[45] ? String(row[45]) : '',
+    sparePartRemark3: row[46] ? String(row[46]) : '',
   };
 };
 
@@ -114,6 +156,11 @@ export const mapJobToRow = (job: ServiceJob): any[] => {
     job.sparePartSerial2 || '',
     job.sparePartDescription2 || '',
     job.sparePartRemark2 || '',
+    normalize24hTime(job.travelTimeStart) || '',
+    normalize24hTime(job.travelTimeStop) || '',
+    normalize24hTime(job.processTimeStart) || '',
+    normalize24hTime(job.processTimeStop) || '',
+    job.processDescription || '',
     job.spareParts3 || '',
     job.sparePartSerial3 || '',
     job.sparePartDescription3 || '',
@@ -163,7 +210,7 @@ export const createSpreadsheet = async (accessToken: string): Promise<string> =>
       body: JSON.stringify({
         valueInputOption: 'RAW',
         data: MONTHS.map(month => ({
-          range: `${month}!A1:AP1`,
+          range: `${month}!A1:BC1`,
           values: [HEADERS]
         }))
       })
@@ -225,7 +272,7 @@ export const fetchYearlyJobs = async (
     const validMonths = MONTHS.filter(m => existingSheetTitles.includes(m));
     if (validMonths.length === 0) return [];
 
-    const ranges = validMonths.map(m => `${m}!A2:AP`).join('&ranges=');
+    const ranges = validMonths.map(m => `${m}!A2:BC`).join('&ranges=');
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=${ranges}`, {
       method: 'GET',
       headers: {
@@ -264,7 +311,7 @@ export const fetchMonthlyJobs = async (
   accessToken: string
 ): Promise<ServiceJob[]> => {
   try {
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${monthYear}!A2:AP`, {
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${monthYear}!A2:BC`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${accessToken}`
@@ -327,7 +374,7 @@ export const appendJobToSheet = async (
     });
     
     // Attempt to write headers
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${monthYear}!A1:AP1?valueInputOption=USER_ENTERED`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${monthYear}!A1:BC1?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -380,7 +427,7 @@ export const updateJobInSheet = async (
     // Month didn't change, perform in-place update
     const sheetRowNumber = rowIdx + 2;
     const rowValues = mapJobToRow(job);
-    const range = `${currentMonthYear}!A${sheetRowNumber}:AP${sheetRowNumber}`;
+    const range = `${currentMonthYear}!A${sheetRowNumber}:BC${sheetRowNumber}`;
 
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
@@ -410,7 +457,7 @@ export const clearRowInSheet = async (
   accessToken: string
 ): Promise<void> => {
   const sheetRowNumber = rowIdx + 2;
-  const range = `${monthYear}!A${sheetRowNumber}:AP${sheetRowNumber}`;
+  const range = `${monthYear}!A${sheetRowNumber}:BC${sheetRowNumber}`;
   
   // Instead of completely clearing (which leaves blank lines in the middle), we can mark the row status as "Cancelled" 
   // or clear its values. Clearing is safer for standard REST range clearing.

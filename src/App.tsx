@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { Activity, LayoutDashboard, FileSpreadsheet, ClipboardList, Settings as SettingsIcon, LogOut, Database, AlertCircle, Sparkles, RefreshCw, ChevronDown, CheckCircle2, CalendarDays, FormInput, ListTodo, Wrench, PhoneCall, DollarSign , FileText, TrendingUp} from 'lucide-react';
+import { Activity, LayoutDashboard, Users, UserCheck, FileSpreadsheet, ClipboardList, Settings as SettingsIcon, LogOut, Database, AlertCircle, Sparkles, RefreshCw, ChevronDown, CheckCircle2, CalendarDays, FormInput, ListTodo, Wrench, PhoneCall, DollarSign , FileText, TrendingUp, MapPin} from 'lucide-react';
 import { initAuth, googleSignIn, handleSignOut, getAccessToken } from './firebase';
 import { ServiceJob, SystemSettings, CMStatusRecord } from './types';
 import { fetchMonthlyJobs, fetchYearlyJobs, appendJobToSheet, updateJobInSheet, generateNextJobNumber, MONTHS } from './sheetsService';
@@ -18,7 +18,11 @@ import QuotationReader from './components/QuotationReader';
 import QuotationDashboard from './components/QuotationDashboard';
 import PMScheduleView from './components/PMScheduleView';
 import DispatchCalendarView from './components/DispatchCalendarView';
+import TodayDashboard from './components/TodayDashboard';
 import PMServiceTab from './components/PMServiceTab';
+import EngineerAvailabilityView from './components/EngineerAvailabilityView';
+import ThailandHospitalMapView from './components/ThailandHospitalMapView';
+import ServiceReportDashboard from './components/ServiceReportDashboard';
 
 const logoUrl = '/logo.svg';
 
@@ -97,7 +101,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   // App tab navigation state
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'form' | 'tracker' | 'billing' | 'settings' | 'cm-status' | 'cm-oncall' | 'pm-schedule' | 'quotation-reader' | 'quotation-dashboard' | 'dispatch-calendar' | 'pm-service'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'service-report' | 'today-operations' | 'engineer-availability' | 'form' | 'tracker' | 'billing' | 'settings' | 'cm-status' | 'cm-oncall' | 'pm-schedule' | 'quotation-reader' | 'quotation-dashboard' | 'dispatch-calendar' | 'pm-service' | 'hospital-map'>('dashboard');
 
   // Loaded jobs database
   const [jobs, setJobs] = useState<ServiceJob[]>([]);
@@ -130,7 +134,8 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        const mergedEngineers = Array.from(new Set([...(DEFAULT_SETTINGS.engineers || []), ...(parsed.engineers || [])]));
+        const mergedEngineers = Array.from(new Set([...(DEFAULT_SETTINGS.engineers || []), ...(parsed.engineers || [])]))
+          .filter(e => e !== 'เจมส์' && e.toLowerCase() !== 'james');
         const mergedHospitals = Array.from(new Set([...(DEFAULT_SETTINGS.hospitals || []), ...(parsed.hospitals || [])]));
         const mergedEquipments = Array.from(new Set([...(DEFAULT_SETTINGS.equipments || []), ...(parsed.equipments || [])]));
         const mergedProducts = Array.from(new Set([...(DEFAULT_SETTINGS.products || []), ...(parsed.products || [])]));
@@ -293,10 +298,8 @@ export default function App() {
     return await generateNextJobNumber(settings.spreadsheetId, dateStr, accessToken, jobs);
   };
 
-  // Trigger simulated Line notifications with a beautiful notification body
+  // Trigger Telegram (embedded) + LINE OA notifications
   const triggerLineNotification = (job: ServiceJob, customText?: string) => {
-    if (!settings.lineConfig.isEnabled) return;
-
     const timestamp = new Date().toLocaleTimeString();
     const actionText = customText ? customText : `Service Dispatched!`;
     
@@ -313,7 +316,7 @@ export default function App() {
       `• Diagnosis: ${job.problemDescription || 'Normal Maintenance'}\n` +
       `• Status: ${job.jobStatus.toUpperCase()}`;
 
-    // Add to simulated push logs on UI smartphone
+    // Add to push logs
     setLineNotificationLog(prev => [
       {
         timestamp,
@@ -324,35 +327,33 @@ export default function App() {
       ...prev
     ]);
 
-    // Real Notify/OA push call via our Express Backend to bypass CORS
-    if (settings.lineConfig.notifyToken || (settings.lineConfig.channelAccessToken && settings.lineConfig.userId)) {
-      fetch('/api/notify', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ 
-          message: textMessage,
-          notifyToken: settings.lineConfig.notifyToken,
-          channelAccessToken: settings.lineConfig.channelAccessToken,
-          userId: settings.lineConfig.userId
-        })
+    // Always call /api/notify so embedded Telegram notification is sent on every device without extra config,
+    // plus LINE OA / LINE Notify if enabled and configured
+    const lineEnabled = settings.lineConfig?.isEnabled !== false;
+    fetch('/api/notify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ 
+        message: textMessage,
+        notifyToken: lineEnabled ? settings.lineConfig?.notifyToken : '',
+        channelAccessToken: lineEnabled ? settings.lineConfig?.channelAccessToken : '',
+        userId: lineEnabled ? settings.lineConfig?.userId : ''
       })
-      .then(res => res.json())
-      .then(data => {
-        if (data.errors && data.errors.length > 0) {
-          alert("แจ้งเตือน LINE ไม่สำเร็จ:\n" + data.errors.join("\n") + "\n\nหากคุณใช้ LINE OA แบบฟรี อาจจะส่งข้อความครบ 200 ข้อความต่อเดือนแล้วครับ");
-        }
-      })
-      .catch(err => {
-        console.error("Backend LINE API call failed:", err);
-      });
-    }
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.errors && data.errors.length > 0 && !data.telegramSuccess) {
+        console.warn("Notification warnings:", data.errors);
+      }
+    })
+    .catch(err => {
+      console.error("Backend Notification API call failed:", err);
+    });
   };
 
   const triggerCMLineNotification = (record: CMStatusRecord, isEdit: boolean) => {
-    if (!settings.lineConfig.isEnabled) return;
-
     const timestamp = new Date().toLocaleTimeString();
     const actionText = isEdit ? `Update CM Status` : `New CM Report`;
     
@@ -366,7 +367,7 @@ export default function App() {
       `• Problem: ${record.problem || 'N/A'}\n` +
       `• Status: ${(record.status || 'Repair request').toUpperCase()}`;
 
-    // Add to simulated push logs on UI smartphone
+    // Add to push logs
     setLineNotificationLog(prev => [
       {
         timestamp,
@@ -377,30 +378,29 @@ export default function App() {
       ...prev
     ]);
 
-    // Real Notify/OA push call via our Express Backend to bypass CORS
-    if (settings.lineConfig.notifyToken || (settings.lineConfig.channelAccessToken && settings.lineConfig.userId)) {
-      fetch('/api/notify', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ 
-          message: textMessage,
-          notifyToken: settings.lineConfig.notifyToken,
-          channelAccessToken: settings.lineConfig.channelAccessToken,
-          userId: settings.lineConfig.userId
-        })
+    // Always call /api/notify so embedded Telegram notification is sent on every device without extra config
+    const lineEnabled = settings.lineConfig?.isEnabled !== false;
+    fetch('/api/notify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ 
+        message: textMessage,
+        notifyToken: lineEnabled ? settings.lineConfig?.notifyToken : '',
+        channelAccessToken: lineEnabled ? settings.lineConfig?.channelAccessToken : '',
+        userId: lineEnabled ? settings.lineConfig?.userId : ''
       })
-      .then(res => res.json())
-      .then(data => {
-        if (data.errors && data.errors.length > 0) {
-          alert("แจ้งเตือน LINE ไม่สำเร็จ:\n" + data.errors.join("\n") + "\n\nหากคุณใช้ LINE OA แบบฟรี อาจจะส่งข้อความครบ 200 ข้อความต่อเดือนแล้วครับ");
-        }
-      })
-      .catch(err => {
-        console.error("Backend LINE API call failed:", err);
-      });
-    }
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.errors && data.errors.length > 0 && !data.telegramSuccess) {
+        console.warn("Notification warnings:", data.errors);
+      }
+    })
+    .catch(err => {
+      console.error("Backend Notification API call failed:", err);
+    });
   };
 
   // Save or Update Job Callback
@@ -589,6 +589,41 @@ export default function App() {
               <LayoutDashboard className="w-4 h-4 shrink-0" />
               <span>Dashboard Overview</span>
             </button>
+
+            <button
+              onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('service-report'); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'service-report' 
+                  ? 'bg-blue-600 text-white shadow-sm font-bold' 
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <FileSpreadsheet className="w-4 h-4 shrink-0 text-emerald-400" />
+              <span>Service Report (สรุปงานช่าง)</span>
+            </button>
+            <button
+              onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('today-operations'); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'today-operations' 
+                  ? 'bg-blue-600 text-white shadow-sm font-bold' 
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <Users className="w-4 h-4 shrink-0" />
+              <span>Today's Operations</span>
+            </button>
+
+            <button
+              onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('engineer-availability'); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'engineer-availability' 
+                  ? 'bg-blue-600 text-white shadow-sm font-bold' 
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <UserCheck className="w-4 h-4 shrink-0" />
+              <span>Engineer Availability</span>
+            </button>
             
             <button
               onClick={() => { setEditingJob(null); setEditingJobIndex(null); setPrefillPMData(undefined); setActiveTab('form'); }}
@@ -674,6 +709,18 @@ export default function App() {
             >
               <CalendarDays className="w-4 h-4 shrink-0" />
               <span>Dispatch / Assign</span>
+            </button>
+
+            <button
+              onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('hospital-map'); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'hospital-map' 
+                  ? 'bg-blue-600 text-white shadow-sm font-bold' 
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <MapPin className="w-4 h-4 shrink-0 text-rose-400" />
+              <span>Hospital Map (แผนที่เครื่อง)</span>
             </button>
 
             <button
@@ -821,6 +868,41 @@ export default function App() {
                 onNavigateToTab={setActiveTab}
               />
             )}
+            {activeTab === 'service-report' && (
+              <ServiceReportDashboard
+                jobs={jobs}
+                yearlyJobs={yearlyJobs}
+                settings={settings}
+                accessToken={accessToken}
+                activeMonthYear={activeMonthYear}
+                onMonthChange={setActiveMonthYear}
+                onNavigateToTab={setActiveTab}
+              />
+            )}
+            {activeTab === 'today-operations' && (
+              <TodayDashboard 
+                settings={settings}
+                accessToken={accessToken}
+              />
+            )}
+
+            {activeTab === 'engineer-availability' && (
+              <EngineerAvailabilityView
+                settings={settings}
+                accessToken={accessToken}
+                jobs={jobs}
+                yearlyJobs={yearlyJobs}
+                onNavigateToTab={setActiveTab}
+                onOpenFormWithEngineer={(engName) => {
+                  setEditingJob(null);
+                  setEditingJobIndex(null);
+                  setPrefillPMData({
+                    engineerName: engName
+                  } as any);
+                  setActiveTab('form');
+                }}
+              />
+            )}
 
             {activeTab === 'form' && (
               <JobForm
@@ -862,6 +944,7 @@ export default function App() {
                   });
                   setActiveTab('form');
                 }}
+                onTriggerPDF={(job) => setPdfJob(job)}
               />
             )}
 
@@ -882,6 +965,7 @@ export default function App() {
                   });
                   setActiveTab('form');
                 }}
+                onTriggerPDF={(job) => setPdfJob(job)}
               />
             )}
 
@@ -892,6 +976,7 @@ export default function App() {
                 accessToken={accessToken}
                 yearlyJobs={jobs}
                 onOpenPMJob={handleOpenPMJob}
+                onNavigateToMap={() => setActiveTab('hospital-map')}
               />
             )}
 
@@ -921,6 +1006,26 @@ export default function App() {
             <DispatchCalendarView 
               settings={settings}
               accessToken={accessToken}
+            />
+          )}
+
+          {activeTab === 'hospital-map' && (
+            <ThailandHospitalMapView
+              settings={settings}
+              accessToken={accessToken}
+              jobs={jobs}
+              onOpenNewJob={(hospitalName, equipment, sn) => {
+                setEditingJob(null);
+                setEditingJobIndex(null);
+                setPrefillPMData({
+                  hospitalName,
+                  equipmentName: equipment,
+                  serialNumber: sn,
+                  jobType: 'PM'
+                });
+                setActiveTab('form');
+              }}
+              onNavigateToTab={(tab) => setActiveTab(tab)}
             />
           )}
 
@@ -962,6 +1067,18 @@ export default function App() {
           <LayoutDashboard className="w-5 h-5" />
           <span>Dashboard</span>
         </button>
+        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('service-report'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'service-report' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
+          <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+          <span>Report</span>
+        </button>
+        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('today-operations'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'today-operations' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
+          <Users className="w-5 h-5" />
+          <span>Today</span>
+        </button>
+        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('engineer-availability'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'engineer-availability' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
+          <UserCheck className="w-5 h-5" />
+          <span>Duty</span>
+        </button>
         <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setPrefillPMData(undefined); setActiveTab('form'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'form' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
           <FileSpreadsheet className="w-5 h-5" />
           <span>Log Job</span>
@@ -986,6 +1103,11 @@ export default function App() {
         <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('pm-service'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'pm-service' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
           <ClipboardList className="w-5 h-5" />
           <span>PM Tasks</span>
+        </button>
+
+        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('hospital-map'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'hospital-map' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
+          <MapPin className="w-5 h-5 text-rose-400" />
+          <span>Map</span>
         </button>
 
         <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('quotation-reader'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'quotation-reader' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>

@@ -15,151 +15,143 @@ interface JobPDFModalProps {
 export default function JobPDFModal({ job, onClose, accessToken }: JobPDFModalProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  
   const jobTags = [];
   if (job.isRepair) jobTags.push('Repair');
   if (job.isComplain) jobTags.push('Complain');
+
   const [hasSigned, setHasSigned] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'generating' | 'uploading' | 'success' | 'error'>('idle');
   const [uploadedLink, setUploadedLink] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Initialize signature canvas drawing
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    // Set brush characteristics
     ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';
-    ctx.strokeStyle = '#0f172a'; // slate-900
+    ctx.strokeStyle = '#0f172a'; 
   }, []);
 
-  // Canvas drawing events
-  const getCoordinates = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-
-    const rect = canvas.getBoundingClientRect();
-    
-    // Scale factor between canvas attribute dimensions and display bounding client rect
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-
-    if ('touches' in e) {
-      if (e.touches.length === 0) return { x: 0, y: 0 };
-      return {
-        x: (e.touches[0].clientX - rect.left) * scaleX,
-        y: (e.touches[0].clientY - rect.top) * scaleY
-      };
-    } else {
-      return {
-        x: (e.clientX - rect.left) * scaleX,
-        y: (e.clientY - rect.top) * scaleY
-      };
-    }
-  };
-
-  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const coords = getCoordinates(e);
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.beginPath();
-    ctx.moveTo(coords.x, coords.y);
+  const handleCanvasTouchStart = (e: React.TouchEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>) => {
     setIsDrawing(true);
     setHasSigned(true);
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    
+    let clientX, clientY;
+    if ('touches' in e) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+    
+    const rect = canvas.getBoundingClientRect();
+    ctx.beginPath();
+    ctx.moveTo(clientX - rect.left, clientY - rect.top);
   };
 
-  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  const handleCanvasTouchMove = (e: React.TouchEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawing) return;
-    e.preventDefault();
-    const coords = getCoordinates(e);
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.lineTo(coords.x, coords.y);
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    
+    let clientX, clientY;
+    if ('touches' in e) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+      e.preventDefault(); 
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+    
+    const rect = canvas.getBoundingClientRect();
+    ctx.lineTo(clientX - rect.left, clientY - rect.top);
     ctx.stroke();
   };
 
-  const stopDrawing = () => {
+  const handleCanvasTouchEnd = () => {
     setIsDrawing(false);
   };
 
-  const clearCanvas = () => {
+  const clearSignature = () => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     setHasSigned(false);
   };
 
-  const handlePrint = () => {
-    window.print();
+  const generatePDF = async () => {
+    const printArea = document.getElementById('print-area');
+    if (!printArea) throw new Error("Print area not found");
+
+    const oldMaxWidth = printArea.style.maxWidth;
+    printArea.style.maxWidth = '210mm';
+    printArea.style.width = '210mm';
+    printArea.style.height = '297mm';
+    
+    const canvas = await html2canvas(printArea, {
+      scale: 2.5,
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff',
+      windowWidth: 794
+    });
+    
+    printArea.style.maxWidth = oldMaxWidth;
+    printArea.style.width = '100%';
+    printArea.style.height = 'auto';
+
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const pdf = new jsPDF({
+      orientation: 'p',
+      unit: 'mm',
+      format: 'a4'
+    });
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+    
+    return pdf;
   };
 
-  // Generate jsPDF from visual preview and upload to Google Drive
+  const handlePrint = async () => {
+    try {
+      setUploadStatus('generating');
+      const pdf = await generatePDF();
+      window.open(pdf.output('bloburl'), '_blank');
+      setUploadStatus('idle');
+    } catch (error) {
+      console.error(error);
+      setUploadStatus('error');
+    }
+  };
+
   const handleSaveToDrive = async () => {
     setUploadStatus('generating');
     setErrorMessage(null);
-
     try {
-      const printArea = document.getElementById('print-area');
-      if (!printArea) throw new Error("Print area not found");
-
-      // Temporarily remove max-width/max-height constraint for rendering so it gets the full layout
-      const oldMaxWidth = printArea.style.maxWidth;
-      printArea.style.maxWidth = '210mm';
-      printArea.style.width = '210mm';
-      printArea.style.height = '297mm'; // Force exact A4 for html2canvas
-      
-      const canvas = await html2canvas(printArea, {
-        scale: 3,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        windowWidth: 794 // 210mm width approx in px
-      });
-      
-      // Restore styles
-      printArea.style.maxWidth = oldMaxWidth;
-      printArea.style.width = '100%';
-      printArea.style.height = 'auto';
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4'
-      });
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-
+      const pdf = await generatePDF();
       const pdfBlob = pdf.output('blob');
-
+      
       setUploadStatus('uploading');
       const folderId = localStorage.getItem('drive_pdf_folder_id') || undefined;
-      const res = await uploadPDFToDrive(accessToken, pdfBlob, `Service_Job_${job.jobNumber}_Worksheet.pdf`, folderId);
+      const res = await uploadPDFToDrive(accessToken, pdfBlob, `Service_Job_${job.jobNumber}_${job.serviceDate || job.callDate}.pdf`, folderId);
       
       setUploadedLink(res.webViewLink);
       setUploadStatus('success');
-    } catch (err: any) {
-      console.error("PDF / Drive Upload Failure:", err);
-      setErrorMessage(err.message || err);
+    } catch (error: any) {
+      console.error("PDF Generate/Upload error:", error);
       setUploadStatus('error');
+      setErrorMessage(error.message || 'Unknown error');
     }
   };
 
@@ -208,7 +200,7 @@ export default function JobPDFModal({ job, onClose, accessToken }: JobPDFModalPr
                     <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={job.jobType === 'IB'} readOnly className="border-black-safe rounded-none" /> IB</label>
                     <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={job.jobType === 'FCO'} readOnly className="border-black-safe rounded-none" /> FCO</label>
                     <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={job.jobType === 'PM'} readOnly className="border-black-safe rounded-none" /> PM {job.pmTimesTotal || '- / -'}</label>
-                    <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={job.jobType === 'CM' || job.jobType === 'CM ซ่อมซ้ำ'} readOnly className="border-black-safe rounded-none" /> CM ซ่อมซ้ำ</label>
+                    <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={job.jobType === 'CM' || (job.jobType as string) === 'CM ซ่อมซ้ำ'} readOnly className="border-black-safe rounded-none" /> CM ซ่อมซ้ำ</label>
                   </div>
                   <div className="flex gap-2 items-center">
                     <span className="font-bold w-10">Date</span>
@@ -272,32 +264,32 @@ export default function JobPDFModal({ job, onClose, accessToken }: JobPDFModalPr
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-b border-black-safe h-7">
+                  <tr className="border-b border-black-safe h-6">
                     <td className="border-r border-black-safe">{job.serviceDate || job.callDate}</td>
-                    <td className="border-r border-black-safe">12:00</td>
-                    <td className="border-r border-black-safe">13:00</td>
+                    <td className="border-r border-black-safe">{job.travelTimeStart || ''}</td>
+                    <td className="border-r border-black-safe">{job.travelTimeStop || ''}</td>
                     <td className="border-r border-black-safe"></td>
                     <td className="border-r border-black-safe">/</td>
                     <td className="border-r border-black-safe">Travel</td>
                     <td className="">{job.engineerName}</td>
                   </tr>
-                  <tr className="border-b border-black-safe h-7">
+                  <tr className="border-b border-black-safe h-6">
                     <td className="border-r border-black-safe">{job.serviceDate || job.callDate}</td>
-                    <td className="border-r border-black-safe">14:30</td>
-                    <td className="border-r border-black-safe">15:30</td>
+                    <td className="border-r border-black-safe">{job.processTimeStart || ''}</td>
+                    <td className="border-r border-black-safe">{job.processTimeStop || ''}</td>
                     <td className="border-r border-black-safe"></td>
                     <td className="border-r border-black-safe">/</td>
-                    <td className="border-r border-black-safe">Check System.</td>
+                    <td className="border-r border-black-safe text-[9px] leading-[1.1] p-0.5">{job.processDescription || (job.jobType === 'PM' ? 'PM, Performance test, Cleaning.' : 'Check System.')}</td>
                     <td className="">{job.engineerName}</td>
                   </tr>
                   {/* Fill empty space */}
-                  <tr className="border-b border-black-safe h-7">
+                  <tr className="border-b border-black-safe h-6">
                     <td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td></td>
                   </tr>
-                  <tr className="border-b border-black-safe h-7">
+                  <tr className="border-b border-black-safe h-6">
                     <td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td></td>
                   </tr>
-                  <tr className="border-b-[1.5px] border-black-safe h-7">
+                  <tr className="border-b-[1.5px] border-black-safe h-6">
                     <td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td className="border-r border-black-safe"></td><td></td>
                   </tr>
                 </tbody>
@@ -305,11 +297,11 @@ export default function JobPDFModal({ job, onClose, accessToken }: JobPDFModalPr
 
               {/* Text Blocks */}
               <div className="flex flex-col border-b-[1.5px] border-black-safe">
-                <div className="p-2 border-b border-black-safe min-h-[50px]">
+                <div className="p-2 border-b border-black-safe min-h-[40px]">
                   <div className="font-bold mb-1 uppercase">FAILURE DESCRIPTION / อาการเสีย</div>
                   <div className="text-red-600-safe text-center whitespace-pre-line">{job.problemDescription || '-'}</div>
                 </div>
-                <div className="p-2 border-b border-black-safe min-h-[50px]">
+                <div className="p-2 border-b border-black-safe min-h-[40px]">
                   <div className="font-bold mb-1 uppercase">REMEDY / การแก้ไข</div>
                   <div className="text-red-600-safe text-center whitespace-pre-line">{job.remark || '-'}</div>
                 </div>
@@ -329,7 +321,7 @@ export default function JobPDFModal({ job, onClose, accessToken }: JobPDFModalPr
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="h-10">
+                  <tr className="h-8">
                     <td className="border-r border-black-safe text-center">{job.spareParts || 'NA'}</td>
                     <td className="border-r border-black-safe text-center">{job.sparePartSerial || 'NA'}</td>
                     <td className="text-center">{job.sparePartDescription || 'NA'}</td>
@@ -424,13 +416,13 @@ export default function JobPDFModal({ job, onClose, accessToken }: JobPDFModalPr
                   ref={canvasRef}
                   width={320}
                   height={240}
-                  onMouseDown={startDrawing}
-                  onMouseMove={draw}
-                  onMouseUp={stopDrawing}
-                  onMouseLeave={stopDrawing}
-                  onTouchStart={startDrawing}
-                  onTouchMove={draw}
-                  onTouchEnd={stopDrawing}
+                  onMouseDown={handleCanvasTouchStart}
+                  onMouseMove={handleCanvasTouchMove}
+                  onMouseUp={handleCanvasTouchEnd}
+                  onMouseLeave={handleCanvasTouchEnd}
+                  onTouchStart={handleCanvasTouchStart}
+                  onTouchMove={handleCanvasTouchMove}
+                  onTouchEnd={handleCanvasTouchEnd}
                   className="w-full h-full cursor-crosshair touch-none"
                 />
               </div>
@@ -438,7 +430,7 @@ export default function JobPDFModal({ job, onClose, accessToken }: JobPDFModalPr
                 <span className="text-[11px] text-slate-400 font-mono">* Signature embeds to PDF instantly</span>
                 <button
                   type="button"
-                  onClick={clearCanvas}
+                  onClick={clearSignature}
                   className="text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-lg cursor-pointer transition-colors"
                 >
                   Clear Pad

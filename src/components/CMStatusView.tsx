@@ -9,6 +9,7 @@ interface CMStatusViewProps {
   accessToken: string | null;
   onNotifyLine?: (record: CMStatusRecord, isEdit: boolean) => void;
   onOpenCMJob?: (hospitalName: string, equipment: string, serialNumber: string, problem: string) => void;
+  onTriggerPDF?: (job: any) => void;
 }
 
 export default function CMStatusView({ settings, accessToken, onNotifyLine, onOpenCMJob }: CMStatusViewProps) {

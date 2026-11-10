@@ -63,6 +63,149 @@ export default function Dashboard({ jobs: rawJobs, yearlyJobs: rawYearlyJobs, se
 
   const displayMonthYear = activeMonthYear === 'YEARLY2026' ? 'Year 2026' : activeMonthYear;
 
+  // KEY METRICS SUMMARY (This Month / Active Period)
+  const summaryMetrics = useMemo(() => {
+    const now = new Date();
+    const currentMonthIndex = now.getMonth();
+    const currentYear = now.getFullYear();
+    const monthNames = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+    let monthJobs: ServiceJob[] = [];
+    let periodLabel = '';
+
+    if (activeMonthYear !== 'YEARLY2026') {
+      monthJobs = jobs;
+      periodLabel = activeMonthYear;
+    } else {
+      const allJobs = rawYearlyJobs && rawYearlyJobs.length > 0 ? rawYearlyJobs : jobs;
+      const monthPrefix = `${currentYear}-${String(currentMonthIndex + 1).padStart(2, '0')}`;
+      monthJobs = allJobs.filter(j => {
+        const d = j.serviceDate || j.callDate || '';
+        return d.startsWith(monthPrefix) || d.includes(`/${String(currentMonthIndex + 1).padStart(2, '0')}/${currentYear}`) || d.includes(`-${String(currentMonthIndex + 1).padStart(2, '0')}-${currentYear}`);
+      });
+      if (monthJobs.length === 0) {
+        monthJobs = allJobs;
+        periodLabel = 'Year 2026';
+      } else {
+        periodLabel = `${monthNames[currentMonthIndex]} ${currentYear}`;
+      }
+    }
+
+    // 1. Total Jobs this Month
+    const totalJobs = monthJobs.length;
+    const doneJobs = monthJobs.filter(j => (j.jobStatus || '').toLowerCase() === 'done').length;
+    const inProgressJobs = monthJobs.filter(j => (j.jobStatus || '').toLowerCase() === 'inprogress').length;
+    const pendingJobs = monthJobs.filter(j => (j.jobStatus || '').toLowerCase() === 'pending').length;
+    const overallCompletionRate = totalJobs > 0 ? Math.round((doneJobs / totalJobs) * 100) : 0;
+
+    // 2. PM Completion Rate
+    const pmJobs = monthJobs.filter(j => {
+      const type = (j.jobType || '').toUpperCase();
+      return type.includes('PM');
+    });
+    const totalPM = pmJobs.length;
+    const donePM = pmJobs.filter(j => (j.jobStatus || '').toLowerCase() === 'done').length;
+    const pmCompletionRate = totalPM > 0 ? Math.round((donePM / totalPM) * 100) : 0;
+
+    const cmJobs = monthJobs.filter(j => {
+      const type = (j.jobType || '').toUpperCase();
+      return type.includes('CM');
+    });
+    const totalCM = cmJobs.length;
+    const doneCM = cmJobs.filter(j => (j.jobStatus || '').toLowerCase() === 'done').length;
+
+    // 3. Average Response Time (Call Date to Service Date)
+    const parseDate = (dStr?: string): Date | null => {
+      if (!dStr) return null;
+      const s = String(dStr).trim();
+      if (!s) return null;
+      if (/^\d{4}-\d{1,2}-\d{1,2}/.test(s)) {
+        const p = s.split(/[-T\s]/);
+        return new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+      }
+      const parts = s.split(/[-/]/);
+      if (parts.length === 3) {
+        if (parts[2].length === 4) {
+          const p0 = parseInt(parts[0], 10);
+          const p1 = parseInt(parts[1], 10);
+          const p2 = parseInt(parts[2], 10);
+          if (p0 > 12) {
+            return new Date(p2, p1 - 1, p0);
+          } else {
+            return new Date(p2, p0 - 1, p1);
+          }
+        }
+      }
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    };
+
+    let totalResponseDays = 0;
+    let responseCount = 0;
+    let sameDayCount = 0;
+
+    monthJobs.forEach(j => {
+      const call = parseDate(j.callDate);
+      const service = parseDate(j.serviceDate);
+      if (call && service && service >= call) {
+        const diffMs = service.getTime() - call.getTime();
+        const diffDays = diffMs / (1000 * 60 * 60 * 24);
+        totalResponseDays += diffDays;
+        responseCount += 1;
+        if (diffDays === 0) {
+          sameDayCount += 1;
+        }
+      }
+    });
+
+    const avgResponseDays = responseCount > 0 
+      ? Number((totalResponseDays / responseCount).toFixed(1)) 
+      : 0;
+    const sameDayRate = responseCount > 0 
+      ? Math.round((sameDayCount / responseCount) * 100) 
+      : 0;
+
+    // Travel & Process Duration
+    let totalServiceDurationMins = 0;
+    let durationCount = 0;
+    monthJobs.forEach(j => {
+      if (j.processTimeStart && j.processTimeStop) {
+        const [h1, m1] = j.processTimeStart.split(':').map(Number);
+        const [h2, m2] = j.processTimeStop.split(':').map(Number);
+        if (!isNaN(h1) && !isNaN(m1) && !isNaN(h2) && !isNaN(m2)) {
+          let mins = (h2 * 60 + m2) - (h1 * 60 + m1);
+          if (mins < 0) mins += 24 * 60;
+          if (mins > 0 && mins < 1440) {
+            totalServiceDurationMins += mins;
+            durationCount += 1;
+          }
+        }
+      }
+    });
+    const avgDurationHours = durationCount > 0 
+      ? Number((totalServiceDurationMins / durationCount / 60).toFixed(1)) 
+      : 0;
+
+    return {
+      periodLabel,
+      totalJobs,
+      doneJobs,
+      inProgressJobs,
+      pendingJobs,
+      overallCompletionRate,
+      totalPM,
+      donePM,
+      pmCompletionRate,
+      totalCM,
+      doneCM,
+      avgResponseDays,
+      responseCount,
+      sameDayRate,
+      avgDurationHours,
+      durationCount
+    };
+  }, [jobs, rawYearlyJobs, activeMonthYear]);
+
   // 1. FINANCIAL & BUSINESS GROWTH
   const financialMetrics = useMemo(() => {
     const totalRevenue = jobs.reduce((sum, j) => sum + (j.revenue || 0), 0);
@@ -188,6 +331,34 @@ export default function Dashboard({ jobs: rawJobs, yearlyJobs: rawYearlyJobs, se
 
     return { total, done, inProgress, pending, pmCount, cmCount, engineerWorkload: engineerData.sort((a,b) => b.active - a.active), engineerResolution: engineerData.filter(e => e.resolutionCount > 0).sort((a,b) => a.avgResolutionDays - b.avgResolutionDays) };
   }, [jobs]);
+
+  // Job Volume Distribution among Engineering Team
+  const engineerDistribution = useMemo(() => {
+    const list = opMetrics.engineerWorkload.filter(e => e.total > 0);
+    const totalVolume = list.reduce((sum, e) => sum + e.total, 0);
+
+    const palette = [
+      '#3b82f6', // blue
+      '#10b981', // emerald
+      '#f59e0b', // amber
+      '#8b5cf6', // purple
+      '#06b6d4', // cyan
+      '#ec4899', // pink
+      '#f97316', // orange
+      '#64748b', // slate
+      '#14b8a6', // teal
+      '#a855f7'  // violet
+    ];
+
+    return {
+      totalVolume,
+      engineers: list.map((eng, idx) => ({
+        ...eng,
+        color: palette[idx % palette.length],
+        percentage: totalVolume > 0 ? Number(((eng.total / totalVolume) * 100).toFixed(1)) : 0
+      }))
+    };
+  }, [opMetrics.engineerWorkload]);
 
   // 3. CUSTOMER HEALTH
   const customerHealth = useMemo(() => {
@@ -408,6 +579,15 @@ export default function Dashboard({ jobs: rawJobs, yearlyJobs: rawYearlyJobs, se
         </div>
         {onMonthChange && (
           <div className="flex flex-wrap items-center gap-3">
+            {onNavigateToTab && (
+              <button
+                onClick={() => onNavigateToTab('service-report')}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded transition-colors cursor-pointer shadow-sm"
+              >
+                <Activity className="w-3.5 h-3.5" />
+                <span>เปิดรายงานสรุปงานช่าง & CM/PM (Full Report)</span>
+              </button>
+            )}
             <button 
               onClick={handleExportExcel}
               className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold px-3 py-1.5 rounded border border-slate-600 transition-colors"
@@ -433,7 +613,130 @@ export default function Dashboard({ jobs: rawJobs, yearlyJobs: rawYearlyJobs, se
         )}
       </div>
 
-      
+      {/* KEY PERFORMANCE INDICATORS SUMMARY SECTION */}
+      <section className="bg-white rounded border border-slate-200 p-5 shadow-sm space-y-4" id="dashboard-executive-summary">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-blue-50 text-blue-600 rounded">
+              <Activity className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Executive Performance Summary</h2>
+              <p className="text-[11px] text-slate-500">Key operational metrics and service delivery indicators for {summaryMetrics.periodLabel}</p>
+            </div>
+          </div>
+          <span className="self-start sm:self-auto text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 px-2.5 py-1 rounded font-mono">
+            {summaryMetrics.periodLabel}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* 1. Total Jobs this Month */}
+          <div className="p-4 bg-slate-50/80 border border-slate-200/80 rounded-lg flex flex-col justify-between hover:border-slate-300 transition-all">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Jobs this Month</span>
+              <div className="p-2 bg-blue-100 text-blue-700 rounded-md">
+                <Briefcase className="w-4 h-4" />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-slate-800 font-mono tracking-tight">{summaryMetrics.totalJobs}</span>
+                <span className="text-xs font-semibold text-slate-400">jobs logged</span>
+              </div>
+              <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
+                <span className="text-emerald-700 font-medium">Done: <strong className="font-mono font-bold">{summaryMetrics.doneJobs}</strong></span>
+                <span className="text-amber-700 font-medium">In-Prog: <strong className="font-mono font-bold">{summaryMetrics.inProgressJobs}</strong></span>
+                <span className="text-slate-500 font-medium">Pending: <strong className="font-mono font-bold">{summaryMetrics.pendingJobs}</strong></span>
+              </div>
+            </div>
+          </div>
+
+          {/* 2. PM Completion Rate */}
+          <div className="p-4 bg-slate-50/80 border border-slate-200/80 rounded-lg flex flex-col justify-between hover:border-slate-300 transition-all">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">PM Completion Rate</span>
+              <div className={`p-2 rounded-md ${summaryMetrics.pmCompletionRate >= 80 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className={`text-3xl font-black font-mono tracking-tight ${summaryMetrics.pmCompletionRate >= 80 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  {summaryMetrics.totalPM > 0 ? `${summaryMetrics.pmCompletionRate}%` : '0%'}
+                </span>
+                <span className="text-xs font-medium text-slate-500">
+                  ({summaryMetrics.donePM} of {summaryMetrics.totalPM} PMs)
+                </span>
+              </div>
+              {/* Progress bar */}
+              <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2.5 overflow-hidden">
+                <div 
+                  className={`h-1.5 rounded-full transition-all duration-500 ${summaryMetrics.pmCompletionRate >= 80 ? 'bg-emerald-500' : 'bg-amber-500'}`} 
+                  style={{ width: `${Math.min(100, summaryMetrics.pmCompletionRate)}%` }}
+                />
+              </div>
+              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                <span>Completed PMs</span>
+                <span className="font-mono font-bold text-slate-700">{summaryMetrics.donePM} / {summaryMetrics.totalPM}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Average Response Time */}
+          <div className="p-4 bg-slate-50/80 border border-slate-200/80 rounded-lg flex flex-col justify-between hover:border-slate-300 transition-all">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Average Response Time</span>
+              <div className="p-2 bg-indigo-100 text-indigo-700 rounded-md">
+                <Clock className="w-4 h-4" />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-slate-800 font-mono tracking-tight">
+                  {summaryMetrics.responseCount > 0 ? `${summaryMetrics.avgResponseDays}` : '-'}
+                </span>
+                <span className="text-xs font-semibold text-slate-500">
+                  {summaryMetrics.responseCount > 0 ? (summaryMetrics.avgResponseDays <= 1 ? 'day (Fast)' : 'days') : 'no date logs'}
+                </span>
+              </div>
+              <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
+                <span className="text-slate-500">Same-Day Service:</span>
+                <span className="font-mono font-bold text-indigo-700">
+                  {summaryMetrics.responseCount > 0 ? `${summaryMetrics.sameDayRate}%` : 'N/A'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Active Queue & Resolution */}
+          <div className="p-4 bg-slate-50/80 border border-slate-200/80 rounded-lg flex flex-col justify-between hover:border-slate-300 transition-all">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Overall Resolution</span>
+              <div className="p-2 bg-purple-100 text-purple-700 rounded-md">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+            </div>
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-purple-700 font-mono tracking-tight">
+                  {summaryMetrics.overallCompletionRate}%
+                </span>
+                <span className="text-xs font-semibold text-slate-400">
+                  {summaryMetrics.inProgressJobs + summaryMetrics.pendingJobs} active
+                </span>
+              </div>
+              <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
+                <span className="text-slate-500">Avg On-Site Duration:</span>
+                <span className="font-mono font-bold text-slate-700">
+                  {summaryMetrics.avgDurationHours > 0 ? `${summaryMetrics.avgDurationHours} hrs` : `${summaryMetrics.doneJobs} closed`}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* PENDING PM ALERTS WIDGET */}
       <div className="bg-white rounded border border-orange-200 p-5 shadow-sm relative overflow-hidden">
         <div className="absolute top-0 right-0 w-2 h-full bg-orange-400"></div>
@@ -530,27 +833,134 @@ export default function Dashboard({ jobs: rawJobs, yearlyJobs: rawYearlyJobs, se
             </div>
           </div>
 
-          <div>
-            <h3 className="text-[11px] font-bold text-slate-600 uppercase mb-2">Engineer Workload</h3>
-            <div className="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-              {opMetrics.engineerWorkload.map((eng, idx) => {
-                const maxVal = Math.max(...opMetrics.engineerWorkload.map(e => e.total));
-                const pDone = (eng.done / maxVal) * 100;
-                const pActive = (eng.active / maxVal) * 100;
-                return (
-                  <div key={idx} className="text-[11px]">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-slate-700">{eng.name}</span>
-                      <span className="text-slate-500 font-mono text-[10px]">{eng.active} Active / {eng.total} Total</span>
-                    </div>
-                    <div className="h-2 w-full bg-slate-100 rounded flex overflow-hidden">
-                      <div className="h-full bg-emerald-500" style={{ width: `${pDone}%` }} title="Done"></div>
-                      <div className="h-full bg-orange-400" style={{ width: `${pActive}%` }} title="Active"></div>
-                    </div>
-                  </div>
-                )
-              })}
+          <div className="border-t border-slate-100 pt-4 mt-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2.5">
+              <div>
+                <h3 className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Job Volume Distribution by Engineer</span>
+                </h3>
+                <p className="text-[10px] text-slate-400">Team workload share and volume proportions</p>
+              </div>
+              <span className="text-[10px] font-mono font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded self-start sm:self-auto">
+                {engineerDistribution.totalVolume} Assigned Jobs
+              </span>
             </div>
+
+            {/* 1. Visual Stacked 100% Progress Bar */}
+            {engineerDistribution.totalVolume > 0 && (
+              <div className="mb-3.5">
+                <div className="h-3 w-full bg-slate-100 rounded-full flex overflow-hidden p-0.5 border border-slate-200/70 shadow-inner">
+                  {engineerDistribution.engineers.map((eng, idx) => (
+                    <div
+                      key={idx}
+                      className="h-full first:rounded-l-full last:rounded-r-full transition-all duration-300 hover:opacity-90 relative cursor-pointer"
+                      style={{ width: `${eng.percentage}%`, backgroundColor: eng.color }}
+                      title={`${eng.name}: ${eng.total} jobs (${eng.percentage}%)`}
+                    />
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 px-0.5 text-[9px] text-slate-500 font-mono">
+                  {engineerDistribution.engineers.slice(0, 5).map((eng, idx) => (
+                    <div key={idx} className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: eng.color }} />
+                      <span className="truncate max-w-[90px]">{eng.name.split(' ')[0]}</span>
+                      <span className="font-bold text-slate-700">{eng.percentage}%</span>
+                    </div>
+                  ))}
+                  {engineerDistribution.engineers.length > 5 && (
+                    <span className="text-slate-400">+{engineerDistribution.engineers.length - 5} more</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 2. Donut Chart + Detailed Breakdown */}
+            {engineerDistribution.totalVolume > 0 ? (
+              <div className="flex flex-col sm:flex-row items-center gap-4 pt-1">
+                {/* Small Donut / Pie Chart */}
+                <div className="w-32 h-32 shrink-0 relative flex items-center justify-center">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Tooltip
+                        formatter={(val: any, name: any, item: any) => [
+                          `${val} jobs (${item?.payload?.percentage || 0}%)`,
+                          item?.payload?.name || name
+                        ]}
+                        contentStyle={{
+                          fontSize: '11px',
+                          borderRadius: '6px',
+                          padding: '4px 8px',
+                          border: '1px solid #e2e8f0',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                        }}
+                      />
+                      <Pie
+                        data={engineerDistribution.engineers}
+                        dataKey="total"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={30}
+                        outerRadius={50}
+                        paddingAngle={2}
+                      >
+                        {engineerDistribution.engineers.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
+                    <span className="text-sm font-black font-mono text-slate-800 leading-none">
+                      {engineerDistribution.totalVolume}
+                    </span>
+                    <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                      Jobs
+                    </span>
+                  </div>
+                </div>
+
+                {/* Individual Engineer Workload Bars */}
+                <div className="flex-1 w-full space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                  {engineerDistribution.engineers.map((eng, idx) => {
+                    const maxVal = Math.max(...engineerDistribution.engineers.map(e => e.total));
+                    const pDone = maxVal > 0 ? (eng.done / maxVal) * 100 : 0;
+                    const pActive = maxVal > 0 ? (eng.active / maxVal) * 100 : 0;
+                    return (
+                      <div key={idx} className="p-1.5 rounded bg-slate-50/80 border border-slate-200/60 hover:border-slate-300 transition-colors text-[11px]">
+                        <div className="flex justify-between items-center mb-1">
+                          <div className="flex items-center gap-1.5 truncate max-w-[150px]">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: eng.color }} />
+                            <span className="font-bold text-slate-700 truncate" title={eng.name}>{eng.name}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                            <span className="font-bold text-slate-800 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                              {eng.percentage}%
+                            </span>
+                            <span className="text-slate-500">
+                              ({eng.total} jobs)
+                            </span>
+                          </div>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-200 rounded-full flex overflow-hidden">
+                          <div className="h-full bg-emerald-500 rounded-l" style={{ width: `${pDone}%` }} title={`Done: ${eng.done}`} />
+                          <div className="h-full bg-orange-400 rounded-r" style={{ width: `${pActive}%` }} title={`Active: ${eng.active}`} />
+                        </div>
+                        <div className="flex justify-between items-center mt-1 text-[9px] font-mono">
+                          <span className="text-emerald-600 font-medium">Done: {eng.done}</span>
+                          <span className="text-orange-500 font-medium">Active: {eng.active}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-slate-400 text-xs">
+                No active jobs assigned to engineers for this period.
+              </div>
+            )}
           </div>
 
 

@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import express from "express";
 import path from "path";
+import { THAILAND_REGIONS, THAILAND_HOSPITALS_DATABASE, resolveHospitalLocation } from "./src/data/thailandHospitalData";
 
 async function startServer() {
   const app = express();
@@ -80,7 +81,73 @@ async function startServer() {
     }
   });
 
-  // API Route for LINE Notifications
+  // ==========================================
+  // Thailand Hospital Map & Region APIs
+  // ==========================================
+  
+  // 1. Get defined PM regions configuration
+  app.get("/api/map/regions", (req, res) => {
+    try {
+      res.json({
+        success: true,
+        regions: THAILAND_REGIONS
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 2. Get curated Thailand hospitals database
+  app.get("/api/map/hospitals", (req, res) => {
+    try {
+      const regionFilter = req.query.region as string;
+      let list = THAILAND_HOSPITALS_DATABASE;
+      if (regionFilter && regionFilter !== 'All') {
+        list = list.filter(h => h.region.toLowerCase() === regionFilter.toLowerCase());
+      }
+      res.json({
+        success: true,
+        total: list.length,
+        hospitals: list
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 3. Resolve location for batch of hospitals (from PM schedule records)
+  app.post("/api/map/resolve-locations", (req, res) => {
+    try {
+      const items: Array<{ hospitalName: string; hintRegion?: string; metadata?: any }> = req.body.items || [];
+      if (!Array.isArray(items)) {
+        return res.status(400).json({ error: "items array is required" });
+      }
+
+      const results = items.map(item => {
+        const location = resolveHospitalLocation(item.hospitalName, item.hintRegion);
+        return {
+          hospitalName: item.hospitalName,
+          hintRegion: item.hintRegion,
+          location,
+          metadata: item.metadata
+        };
+      });
+
+      res.json({
+        success: true,
+        count: results.length,
+        results
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Hardcoded Telegram Bot Configuration (Embedded directly in system, no per-device setting required)
+  const TELEGRAM_BOT_TOKEN = "9053573002:AAHZovzwSjReuDpAiZ7eeBoaHetwWFZqSkk";
+  const TELEGRAM_CHAT_ID = "-1004379656642";
+
+  // API Route for Notifications (Telegram + LINE OA / LINE Notify)
   app.post("/api/notify", async (req, res) => {
     try {
       const { message, notifyToken, channelAccessToken, userId } = req.body;
@@ -89,11 +156,37 @@ async function startServer() {
         return res.status(400).json({ error: "Message is required" });
       }
 
+      let telegramSuccess = false;
       let lineNotifySuccess = false;
       let lineOASuccess = false;
-      const errors = [];
+      const errors: string[] = [];
 
-      // 1. Send via LINE Notify (if token provided)
+      // 1. Always send via Embedded Telegram Bot
+      if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+        try {
+          const tgRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              chat_id: TELEGRAM_CHAT_ID,
+              text: message
+            })
+          });
+
+          if (!tgRes.ok) {
+            const tgErrText = await tgRes.text();
+            errors.push(`Telegram failed: ${tgErrText}`);
+          } else {
+            telegramSuccess = true;
+          }
+        } catch (err: any) {
+          errors.push(`Telegram error: ${err.message}`);
+        }
+      }
+
+      // 2. Send via LINE Notify (if token provided)
       if (notifyToken) {
         try {
           const notifyParams = new URLSearchParams();
@@ -118,7 +211,7 @@ async function startServer() {
         }
       }
 
-      // 2. Send via LINE OA Messaging API (if channel access token & user id provided)
+      // 3. Send via LINE OA Messaging API (if channel access token & user id provided)
       if (channelAccessToken && userId) {
         try {
           const oaRes = await fetch('https://api.line.me/v2/bot/message/push', {
@@ -150,7 +243,8 @@ async function startServer() {
       }
 
       res.json({
-        success: lineNotifySuccess || lineOASuccess,
+        success: telegramSuccess || lineNotifySuccess || lineOASuccess,
+        telegramSuccess,
         lineNotifySuccess,
         lineOASuccess,
         errors

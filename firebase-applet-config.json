@@ -1,8 +1,12 @@
 {
+  "projectId": "seismic-bonito-nsjh2",
+  "appId": "1:929612499060:web:60966efdbeddafe2dae921",
   "apiKey": "AIzaSyBH6sWN755y33UM_xXoZgdMkxWiupHlsqM",
   "authDomain": "seismic-bonito-nsjh2.firebaseapp.com",
-  "projectId": "seismic-bonito-nsjh2",
+  "firestoreDatabaseId": "ai-studio-iiscallservice-85cca5e4-3223-478e-961d-1052b677d255",
   "storageBucket": "seismic-bonito-nsjh2.firebasestorage.app",
   "messagingSenderId": "929612499060",
-  "appId": "1:929612499060:web:60966efdbeddafe2dae921"
+  "measurementId": "",
+  "oAuthClientId": "929612499060-2dpt1ma965or1757te033ihh2it4mksj.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

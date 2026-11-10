@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Tag, HardDrive, Clipboard, User, Phone, CheckSquare, DollarSign, Wrench, RefreshCw, AlertCircle, Sparkles } from 'lucide-react';
+import { Calendar, Tag, HardDrive, Clipboard, User, Phone, CheckSquare, DollarSign, Wrench, RefreshCw, AlertCircle, Sparkles, Clock } from 'lucide-react';
 import { ServiceJob, SystemSettings } from '../types';
+import { normalize24hTime } from '../sheetsService';
 
 interface JobFormProps {
   settings: SystemSettings;
@@ -153,7 +154,34 @@ export default function JobForm({ settings, onSaveJob, onCalculateJobNumber, edi
   };
 
   const handleInputChange = (field: keyof ServiceJob, val: any) => {
-    setFormData(prev => ({ ...prev, [field]: val }));
+    setFormData(prev => {
+      const next = { ...prev, [field]: val };
+      if (field === 'jobType' && !editingJob) {
+        if (val === 'PM') {
+          next.processDescription = 'PM, Performance test, Cleaning.';
+        } else if (val === 'CM') {
+          next.processDescription = 'Check System.';
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleTimeChange = (field: keyof ServiceJob, val: string) => {
+    let clean = val.replace(/[^\d:]/g, '');
+    if (clean.length > 5) clean = clean.slice(0, 5);
+
+    // If typing 3rd digit without colon, auto-insert colon (e.g. "13" + "3" -> "13:3")
+    if (clean.length === 3 && !clean.includes(':')) {
+      clean = clean.slice(0, 2) + ':' + clean.slice(2);
+    }
+    handleInputChange(field, clean);
+  };
+
+  const handleTimeBlur = (field: keyof ServiceJob, val: string) => {
+    if (!val) return;
+    const formatted = normalize24hTime(val);
+    handleInputChange(field, formatted);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -181,7 +209,15 @@ export default function JobForm({ settings, onSaveJob, onCalculateJobNumber, edi
 
     setIsSaving(true);
     try {
-      const savedJob = await onSaveJob(formData as ServiceJob);
+      const jobDataToSave: ServiceJob = {
+        ...(formData as ServiceJob),
+        travelTimeStart: normalize24hTime(formData.travelTimeStart),
+        travelTimeStop: normalize24hTime(formData.travelTimeStop),
+        processTimeStart: normalize24hTime(formData.processTimeStart),
+        processTimeStop: normalize24hTime(formData.processTimeStop),
+      };
+
+      const savedJob = await onSaveJob(jobDataToSave);
       const assignedNum = savedJob?.jobNumber || formData.jobNumber;
       setSuccessMsg(editingJob 
         ? `Service job #${assignedNum} successfully updated!` 
@@ -510,6 +546,115 @@ export default function JobForm({ settings, onSaveJob, onCalculateJobNumber, edi
               </div>
             </div>
 
+
+            {/* Travel Time (24h) */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase">
+                  Time Travel (Start - Stop) <span className="text-blue-600 font-semibold normal-case">(24 ชม.)</span>
+                </label>
+              </div>
+              <div className="flex gap-2">
+                <div className="relative w-1/2">
+                  <Clock className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    list="time-24h-presets"
+                    placeholder="08:30"
+                    maxLength={5}
+                    value={formData.travelTimeStart || ''}
+                    onChange={(e) => handleTimeChange('travelTimeStart', e.target.value)}
+                    onBlur={(e) => handleTimeBlur('travelTimeStart', e.target.value)}
+                    className="w-full pl-8 pr-2 min-h-[44px] md:min-h-0 py-2 md:py-1.5 text-sm md:text-xs bg-white border border-slate-300 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                  />
+                </div>
+                <div className="relative w-1/2">
+                  <Clock className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    list="time-24h-presets"
+                    placeholder="10:00"
+                    maxLength={5}
+                    value={formData.travelTimeStop || ''}
+                    onChange={(e) => handleTimeChange('travelTimeStop', e.target.value)}
+                    onBlur={(e) => handleTimeBlur('travelTimeStop', e.target.value)}
+                    className="w-full pl-8 pr-2 min-h-[44px] md:min-h-0 py-2 md:py-1.5 text-sm md:text-xs bg-white border border-slate-300 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Process Time (24h) */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase">
+                  Time Process (Start - Stop) <span className="text-blue-600 font-semibold normal-case">(24 ชม.)</span>
+                </label>
+              </div>
+              <div className="flex gap-2">
+                <div className="relative w-1/2">
+                  <Clock className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    list="time-24h-presets"
+                    placeholder="10:00"
+                    maxLength={5}
+                    value={formData.processTimeStart || ''}
+                    onChange={(e) => handleTimeChange('processTimeStart', e.target.value)}
+                    onBlur={(e) => handleTimeBlur('processTimeStart', e.target.value)}
+                    className="w-full pl-8 pr-2 min-h-[44px] md:min-h-0 py-2 md:py-1.5 text-sm md:text-xs bg-white border border-slate-300 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                  />
+                </div>
+                <div className="relative w-1/2">
+                  <Clock className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    list="time-24h-presets"
+                    placeholder="12:00"
+                    maxLength={5}
+                    value={formData.processTimeStop || ''}
+                    onChange={(e) => handleTimeChange('processTimeStop', e.target.value)}
+                    onBlur={(e) => handleTimeBlur('processTimeStop', e.target.value)}
+                    className="w-full pl-8 pr-2 min-h-[44px] md:min-h-0 py-2 md:py-1.5 text-sm md:text-xs bg-white border border-slate-300 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Datalist for 24-Hour Time Presets */}
+            <datalist id="time-24h-presets">
+              {[
+                "07:00", "07:30", "08:00", "08:30", "09:00", "09:30",
+                "10:00", "10:30", "11:00", "11:30", "12:00", "12:30",
+                "13:00", "13:30", "14:00", "14:30", "15:00", "15:30",
+                "16:00", "16:30", "17:00", "17:30", "18:00", "18:30",
+                "19:00", "19:30", "20:00", "20:30", "21:00", "22:00", "23:00", "00:00"
+              ].map(t => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+
+            {/* Process Description */}
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Process</label>
+              <input
+                type="text"
+                list="process-list"
+                placeholder="Select or enter process..."
+                value={formData.processDescription || ''}
+                onChange={(e) => handleInputChange('processDescription', e.target.value)}
+                className="w-full px-2.5 min-h-[44px] md:min-h-0 py-2 md:py-1.5 text-sm md:text-xs bg-white border border-slate-300 rounded text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <datalist id="process-list">
+                <option value="System Install." />
+                <option value="System Install and Dicom Configuration." />
+                <option value="Check System." />
+                <option value="System all calibration." />
+                <option value="Replace Spare part and Adjustment." />
+                <option value="Replace Spare part." />
+                <option value="PM, Performance test, Cleaning." />
+              </datalist>
+            </div>
           </div>
         </div>
 

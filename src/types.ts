@@ -42,6 +42,11 @@ export interface ServiceJob {
   sparePartDescription3?: string;
   sparePartRemark3?: string;
   billingStatus?: string;
+  travelTimeStart?: string;
+  travelTimeStop?: string;
+  processTimeStart?: string;
+  processTimeStop?: string;
+  processDescription?: string;
 }
 
 export interface LineConfig {
