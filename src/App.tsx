@@ -296,15 +296,24 @@ export default function App() {
       setYearlyJobs(fetched);
     } catch (err: any) {
       const msg = err?.message || '';
-      if (!msg.includes('401')) {
-        console.error("Failed to load yearly jobs", err);
-      }
-      if (msg.includes("403")) {
-        setFetchError(msg);
-      }
       if (msg.includes('401') && !isBridgeToken(effectiveToken)) {
         handleLogout();
         setAuthError('Session expired. Please sign in again.');
+        return;
+      }
+      const isExpectedBridgeError =
+        isBridgeToken(effectiveToken) ||
+        msg.includes('403') ||
+        msg.includes('503') ||
+        msg.includes('502') ||
+        msg.includes('Bridge') ||
+        msg.includes('Apps Script') ||
+        msg.includes('Service Account');
+      if (isExpectedBridgeError) {
+        setFetchError(prev => prev || msg);
+        console.warn("Bridge yearly jobs sync warning:", msg);
+      } else {
+        console.error("Failed to load yearly jobs", err);
       }
     }
   };
@@ -885,11 +894,31 @@ export default function App() {
           )}
 
           {fetchError && (
-            <div className="mx-4 mt-3 p-2.5 bg-red-50 border border-red-200 rounded text-xs flex items-start gap-2.5 shrink-0">
-              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold text-red-800">Spreadsheet Range Error</span>
-                <p className="text-slate-600 mt-0.5">{fetchError}</p>
+            <div className="mx-4 mt-3 p-3 bg-red-50 border border-red-200 rounded-md text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3 shrink-0">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-red-800">
+                    {(fetchError.includes('Bridge') || fetchError.includes('Apps Script') || fetchError.includes('403') || fetchError.includes('503') || fetchError.includes('Service Account'))
+                      ? 'การเชื่อมต่อ Google Sheets Bridge ขัดข้อง'
+                      : 'Spreadsheet Range Error'}
+                  </span>
+                  <p className="text-slate-700 mt-0.5 leading-relaxed">{fetchError}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 pl-6 sm:pl-0">
+                <button
+                  onClick={() => { loadJobs(); loadYearlyJobs(); }}
+                  className="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-red-200 text-red-700 font-bold rounded text-[11px] cursor-pointer transition-colors"
+                >
+                  ลองเชื่อมต่อใหม่
+                </button>
+                <button
+                  onClick={() => setActiveTab('settings')}
+                  className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded text-[11px] cursor-pointer transition-colors"
+                >
+                  เปิดหน้า System Connections
+                </button>
               </div>
             </div>
           )}

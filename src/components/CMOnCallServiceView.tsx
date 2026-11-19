@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { SystemSettings, CMStatusRecord } from '../types';
 import { fetchCMOnCallRecords, appendCMOnCallRecord, updateCMOnCallRecord } from '../sheetsService';
 import { uploadImageToDrive, createDriveFolder } from '../driveService';
+import { isBridgeToken } from '../googleBridgeClient';
 import { AlertCircle, Camera, UploadCloud, RefreshCw, Loader2, Plus, X, Edit2, Send } from 'lucide-react';
 
 interface CMOnCallServiceViewProps {
@@ -52,7 +53,16 @@ export default function CMOnCallServiceView({ settings, accessToken, onNotifyLin
       console.log('CM On Call fetched data:', data);
       setRecords(data);
     } catch (err: any) {
-      if (err.message && err.message.includes("403")) { setError("Failed to load CM On Call records. 403 Forbidden. Please make sure the Google Sheets API is enabled for this project and you have access to the spreadsheet."); } else { if (err.message && err.message.includes('401')) { setError('Session expired. Please sign out and sign in again.'); } else { setError(err.message || 'Failed to load CM On Call records.'); } }
+      const msg = err?.message || '';
+      if (isBridgeToken(accessToken) || msg.includes('Bridge') || msg.includes('Apps Script') || msg.includes('Service Account')) {
+        setError(msg || 'Failed to load CM On Call records via Google Bridge.');
+      } else if (msg.includes("403")) {
+        setError("Failed to load CM On Call records. 403 Forbidden. Please make sure the Google Sheets API is enabled for this project and you have access to the spreadsheet.");
+      } else if (msg.includes('401')) {
+        setError('Session expired. Please sign out and sign in again.');
+      } else {
+        setError(msg || 'Failed to load CM On Call records.');
+      }
     } finally {
       setIsLoading(false);
     }

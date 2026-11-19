@@ -57,11 +57,17 @@ export const callGoogleBridge = async <T = any>(
     }),
   });
 
+  const rawText = await res.text();
   let parsed: any = {};
   try {
-    parsed = await res.json();
+    parsed = rawText ? JSON.parse(rawText) : {};
   } catch {
-    parsed = { ok: false, status: res.status, error: `HTTP ${res.status}` };
+    const snippet = rawText && !rawText.trim().startsWith('<') ? rawText.trim().slice(0, 200) : '';
+    parsed = {
+      ok: false,
+      status: res.status,
+      error: snippet ? `HTTP ${res.status}: ${snippet}` : `HTTP ${res.status}`,
+    };
   }
 
   return {

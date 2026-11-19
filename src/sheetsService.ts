@@ -96,7 +96,11 @@ const sheetsGetMeta = async (spreadsheetId: string, accessToken: string): Promis
   if (shouldUseBridge(accessToken)) {
     const res = await callGoogleBridge<{ sheets: Array<{ properties: { title: string } }> }>('getMetadata', { spreadsheetId });
     if (!res.ok || !res.data) {
-      throw new Error(`Failed to fetch spreadsheet metadata. Code: ${res.status}${res.error ? ` - ${res.error}` : ''}`);
+      throw new Error(
+        res.error
+          ? `Google Sheets Bridge (${res.status}): ${res.error}`
+          : `Failed to fetch spreadsheet metadata. Code: ${res.status}`
+      );
     }
     return res.data;
   }

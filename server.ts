@@ -2,6 +2,8 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { JWT } from "google-auth-library";
 import express from "express";
 import fs from "fs";
+import http from "http";
+import https from "https";
 import path from "path";
 import { THAILAND_REGIONS, THAILAND_HOSPITALS_DATABASE, resolveHospitalLocation } from "./src/data/thailandHospitalData";
 
@@ -446,6 +448,147 @@ async function startServer() {
     }
   });
 
+  function doRawHttpRequest(
+    targetUrl: string,
+    options: {
+      method: "GET" | "POST";
+      headers?: Record<string, string>;
+      body?: string;
+      timeoutMs?: number;
+    }
+  ): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
+    return new Promise((resolve, reject) => {
+      const parsedUrl = new URL(targetUrl);
+      const transport = parsedUrl.protocol === "http:" ? http : https;
+
+      const reqHeaders: Record<string, string> = {
+        "User-Agent": "IIS-Service-Bridge/1.0",
+        "Accept": "application/json, text/plain, */*",
+        "Connection": "close",
+        ...(options.headers || {})
+      };
+
+      if (options.body !== undefined) {
+        reqHeaders["Content-Length"] = String(Buffer.byteLength(options.body, "utf8"));
+      }
+
+      const req = transport.request(
+        {
+          protocol: parsedUrl.protocol,
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || (parsedUrl.protocol === "http:" ? 80 : 443),
+          path: parsedUrl.pathname + parsedUrl.search,
+          method: options.method,
+          agent: false, // Prevent undici/keep-alive ECONNRESET on Google Apps Script redirects
+          headers: reqHeaders
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("end", () => {
+            resolve({
+              status: res.statusCode || 500,
+              headers: res.headers,
+              body: Buffer.concat(chunks).toString("utf8")
+            });
+          });
+          res.on("error", reject);
+        }
+      );
+
+      req.setTimeout(options.timeoutMs ?? 30000, () => {
+        req.destroy(new Error("Request to Google Apps Script timed out"));
+      });
+
+      req.on("error", reject);
+      if (options.body !== undefined) {
+        req.write(options.body, "utf8");
+      }
+      req.end();
+    });
+  }
+
+  function isTransientNetworkError(err: any): boolean {
+    const code = err?.code || err?.cause?.code || "";
+    const msg = String(err?.message || "").toLowerCase();
+    return (
+      code === "ECONNRESET" ||
+      code === "ETIMEDOUT" ||
+      code === "EPIPE" ||
+      code === "ECONNREFUSED" ||
+      code === "EAI_AGAIN" ||
+      msg.includes("econnreset") ||
+      msg.includes("socket hang up") ||
+      msg.includes("timed out")
+    );
+  }
+
+  async function postToAppsScript(targetGasUrl: string, bodyObj: { action: string; payload: any }) {
+    const payloadStr = JSON.stringify(bodyObj);
+    const isReadAction = ["ping", "getMetadata", "getValues", "batchGetValues"].includes(bodyObj.action);
+    const maxAttempts = isReadAction ? 3 : 2;
+
+    let lastErr: any = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        let res = await doRawHttpRequest(targetGasUrl, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: payloadStr
+        });
+
+        let currentUrl = targetGasUrl;
+        let redirectCount = 0;
+
+        while (
+          [301, 302, 303, 307, 308].includes(res.status) &&
+          res.headers.location &&
+          redirectCount < 5
+        ) {
+          const nextLocation = Array.isArray(res.headers.location)
+            ? res.headers.location[0]
+            : res.headers.location;
+          const resolvedUrl = new URL(nextLocation, currentUrl).toString();
+
+          if (resolvedUrl.includes("accounts.google.com")) {
+            return {
+              status: 403,
+              body: "",
+              isAuthRedirect: true
+            };
+          }
+
+          // After GAS doPost executes, it redirects to script.googleusercontent.com/macros/echo for GET
+          let getAttempt = 0;
+          while (true) {
+            try {
+              res = await doRawHttpRequest(resolvedUrl, { method: "GET" });
+              break;
+            } catch (getErr: any) {
+              getAttempt++;
+              if (getAttempt >= 3 || !isTransientNetworkError(getErr)) throw getErr;
+              await new Promise((r) => setTimeout(r, 250 * getAttempt));
+            }
+          }
+
+          currentUrl = resolvedUrl;
+          redirectCount++;
+        }
+
+        return { status: res.status, body: res.body, isAuthRedirect: false };
+      } catch (err: any) {
+        lastErr = err;
+        if (attempt < maxAttempts && isTransientNetworkError(err)) {
+          await new Promise((r) => setTimeout(r, 350 * attempt));
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw lastErr || new Error("Failed to contact Google Apps Script");
+  }
+
   app.post("/api/google-bridge", async (req, res) => {
     try {
       const { action, payload, gasWebAppUrl } = req.body || {};
@@ -458,22 +601,26 @@ async function startServer() {
 
       // Priority 1: Google Apps Script Web App Bridge
       if (targetGasUrl) {
-        const gasRes = await fetch(targetGasUrl, {
-          method: "POST",
-          redirect: "follow",
-          headers: {
-            "Content-Type": "text/plain;charset=utf-8"
-          },
-          body: JSON.stringify({ action, payload: payload || {} })
-        });
-
-        const rawText = await gasRes.text();
-        if (rawText.trim().startsWith("<")) {
-          return res.status(403).json({
+        if (targetGasUrl.endsWith("/dev")) {
+          return res.status(200).json({
             ok: false,
             status: 403,
             error:
-              "Apps Script Web App ส่งหน้า Login HTML กลับมา — กรุณาตั้งค่า Deploy > Who has access เป็น 'Anyone' (ทุกคน) แล้วนำ URL ใหม่มาใส่"
+              "คุณกำลังใช้ลิงก์ /dev (สำหรับผู้พัฒนาเท่านั้น) — กรุณากด Deploy > New deployment > Web app (Who has access: Anyone) แล้วนำลิงก์ที่ลงท้ายด้วย /exec มาใช้งานแทน"
+          });
+        }
+
+        const gasResult = await postToAppsScript(targetGasUrl, { action, payload: payload || {} });
+        const rawText = gasResult.body || "";
+
+        if (gasResult.isAuthRedirect || gasResult.status === 401 || rawText.trim().startsWith("<")) {
+          return res.status(200).json({
+            ok: false,
+            status: 403,
+            error:
+              "Apps Script Web App ไม่สามารถเข้าถึงได้แบบสาธารณะ (HTTP " +
+              gasResult.status +
+              ") — กรุณาตรวจสอบในหน้า Apps Script ว่ากด Deploy > New deployment > Web app โดยตั้งค่า Execute as: Me และ Who has access: Anyone แล้วคัดลอกลิงก์ /exec ล่าสุดมาวางใหม่ (หากบัญชี Google Workspace องค์กรบล็อกการแชร์แบบ Anyone ให้สร้าง Apps Script บนบัญชี @gmail.com ส่วนตัว หรือใช้แท็บ Service Account JSON แทน)"
           });
         }
 
@@ -481,16 +628,19 @@ async function startServer() {
         try {
           parsed = JSON.parse(rawText);
         } catch {
-          return res.status(502).json({
+          return res.status(200).json({
             ok: false,
             status: 502,
-            error: `Apps Script response is not valid JSON: ${rawText.slice(0, 200)}`
+            error: `Apps Script response is not valid JSON (HTTP ${gasResult.status}): ${rawText.slice(0, 200)}`
           });
         }
 
         if (!parsed.ok) {
-          const errStatus = Number(parsed.status) || 500;
-          return res.status(errStatus).json(parsed);
+          return res.status(200).json({
+            ...parsed,
+            ok: false,
+            status: Number(parsed.status) || 500
+          });
         }
 
         return res.json(parsed);
@@ -499,10 +649,10 @@ async function startServer() {
       // Priority 2: Google Service Account
       if (cfg.serviceAccount) {
         const saResult = await executeViaServiceAccount(cfg.serviceAccount, action, payload || {});
-        return res.status(saResult.status).json(saResult.body);
+        return res.status(200).json(saResult.body);
       }
 
-      return res.status(503).json({
+      return res.status(200).json({
         ok: false,
         status: 503,
         errorCode: "BRIDGE_NOT_CONFIGURED",
@@ -510,11 +660,14 @@ async function startServer() {
           "ยังไม่ได้เชื่อมต่อ Apps Script Bridge หรือ Service Account — กรุณาไปที่ System Connections เพื่อวาง Web App URL"
       });
     } catch (err: any) {
-      console.error("Google Bridge Error:", err);
-      res.status(500).json({
+      console.warn("Google Bridge Error:", err?.message || err);
+      const isReset = isTransientNetworkError(err);
+      res.status(200).json({
         ok: false,
-        status: 500,
-        error: err.message || "Google Bridge proxy error"
+        status: isReset ? 502 : 500,
+        error: isReset
+          ? `เชื่อมต่อ Google Apps Script ขัดข้องชั่วคราว (${err?.code || err?.cause?.code || "ECONNRESET"}) กรุณาลองใหม่อีกครั้งหรือตรวจสอบ Web App URL`
+          : err.message || "Google Bridge proxy error"
       });
     }
   });
