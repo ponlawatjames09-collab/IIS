@@ -42,7 +42,9 @@ export default function Settings({
   const [cmOnCallSpreadsheetInput, setCmOnCallSpreadsheetInput] = useState(settings.cmOnCallSpreadsheetId || '19c9vJhO4qMdCP1O7rwWP_aUZyTqQrTwnzWWxtH7zDdE');
 
   // No-Login Bridge states
-  const [bridgeTab, setBridgeTab] = useState<'gas' | 'service_account'>('gas');
+  const [bridgeTab, setBridgeTab] = useState<'gas' | 'service_account'>(
+    bridgeStatus?.mode === 'gas' ? 'gas' : 'service_account'
+  );
   const [gasUrlInput, setGasUrlInput] = useState(settings.gasWebAppUrl || bridgeStatus?.gasWebAppUrl || '');
   const [serviceAccountInput, setServiceAccountInput] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
@@ -83,9 +85,17 @@ export default function Settings({
   }, [settings.cmOnCallSpreadsheetId]);
 
   useEffect(() => {
-    const url = settings.gasWebAppUrl || bridgeStatus?.gasWebAppUrl || '';
-    if (url) setGasUrlInput(url);
-  }, [settings.gasWebAppUrl, bridgeStatus?.gasWebAppUrl]);
+    if (bridgeStatus?.mode === 'service_account') {
+      setGasUrlInput('');
+      setBridgeTab('service_account');
+    } else {
+      const url = settings.gasWebAppUrl || bridgeStatus?.gasWebAppUrl || '';
+      if (url) {
+        setGasUrlInput(url);
+        setBridgeTab('gas');
+      }
+    }
+  }, [settings.gasWebAppUrl, bridgeStatus?.gasWebAppUrl, bridgeStatus?.mode]);
 
   const syncServerBridgeConfig = async (payload: Record<string, any>) => {
     const res = await fetch('/api/bridge/config', {
@@ -187,13 +197,19 @@ export default function Settings({
     setIsSavingBridge(true);
     try {
       const data = await syncServerBridgeConfig({
+        gasWebAppUrl: '',
         serviceAccountJson: serviceAccountInput.trim(),
         spreadsheetId: spreadsheetInput.trim(),
         pmSpreadsheetId: pmSpreadsheetInput.trim(),
         cmOnCallSpreadsheetId: cmOnCallSpreadsheetInput.trim()
       });
+      setGasUrlInput('');
+      onUpdateSettings({
+        ...settings,
+        gasWebAppUrl: null
+      });
       setServiceAccountInput('');
-      setSpreadsheetSuccess(`บันทึก Service Account (${data.serviceAccountEmail}) สำเร็จ! อย่าลืมแชร์ Google Sheets ให้ Email นี้เป็น Editor`);
+      setSpreadsheetSuccess(`บันทึก Service Account (${data.serviceAccountEmail}) และเปิดใช้งานถาวรสำเร็จ!`);
     } catch (err: any) {
       setSpreadsheetError(`บันทึก Service Account ไม่สำเร็จ: ${err.message || err}`);
     } finally {

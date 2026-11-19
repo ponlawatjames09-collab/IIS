@@ -24,6 +24,46 @@ interface BridgeConfigStore {
 
 const BRIDGE_CONFIG_FILE = path.join(process.cwd(), ".bridge-config.json");
 
+const EMBEDDED_SPREADSHEET_ID = "1s2VkerbQ7y0BeHBcdtzkXtsxzn-VR6ZMw2l0p9NCiP8";
+const EMBEDDED_PM_SPREADSHEET_ID = "1wBbN1127iViI_0pXZU2RUoVeuSxQfZsI0qoIgxaaO4s";
+const EMBEDDED_CM_ONCALL_SPREADSHEET_ID = "19c9vJhO4qMdCP1O7rwWP_aUZyTqQrTwnzWWxtH7zDdE";
+
+const EMBEDDED_SERVICE_ACCOUNT: ServiceAccountCredentials = {
+  project_id: "gen-lang-client-0960472031",
+  client_email: "serviceiis@gen-lang-client-0960472031.iam.gserviceaccount.com",
+  private_key: [
+    "-----BEGIN PRIVATE KEY-----",
+    "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC154xi1HUjX/X+",
+    "1o+CRqRH4E+SnzqGB4IAOS4bE133HovkgRg1QHp14Fhd3fFHEoO70qCc//4NtA6s",
+    "9oBHsgFEkNWeVshGOnoi9c5Cq+zZINkRMH4sHR2r9iWlGy3zFK1V8pJn9/TThUZb",
+    "2ffIpLxv2/XvkpyDveXbYZv5KSb18OqKHs9wDagP6qkeCYsJWJiBkJZqJWzl+7Vk",
+    "zo7eMZ3rUNkQ+oQ/8XteZofC2leDGBqTvhNXHGKWqn+onjO6MWLUzZa80RSVVXnt",
+    "NRJxHDjlOiB85KstUsj5W56JcF7NVr98jdN6WhV1J8N9A1cu8YsTSnzHnogbg7nR",
+    "/cQFmk35AgMBAAECggEAMX9NMwNO0I5nGK33pOJmB2zhGiubuCbI2Bi3FAUEF59H",
+    "P6llFfByoiqmwPwIkGdYUz5wF+iMj9wD9kqpA1lLgQXMKubAXmPBIkwykO/JZhfL",
+    "GSNR4d0WWtmCyteHfFKPDAkSj5noE7p7N7kq9HznDaUT2dnSHwMITdbUo0rwYBF1",
+    "ZKi4Ct9tYY9uqVxuB7SKsg1Ttj4y7tfAoJ9eVzuQPBGYBBxlElm7RCoqhDeL0xPk",
+    "uhV7Q6G38pZW6lm6agWPZtf1MpxJM0a+GFpUqUaRm2TYIMcvVwU3giYsp3ZEY6b2",
+    "UOyt+sZd3Dak1EzhuW7zvcwnSmuXBmxqPQvTISAuRQKBgQDpR8IGrI8YqxBKqWJb",
+    "9H35HYeTN/3AXoagGZkdBmoa1OjuDmUhjmBRkKiQu4EKbTFe1cw2tsUWTkdCWtnc",
+    "C8ZfuBaKpTg9q5NRWNf4kwxEDJEMPNuK+R/1gAF0Mr7qyeO6W9V7OREHvWdHaZ2I",
+    "5N2zl5l6+NCe8Y2kExKBeCBgAwKBgQDHnt35C/fUuxMDISkjR4U3b0oeHlTZDxsr",
+    "IyhAqr9wB2DW7l1/Tr9K7/zjqGMMP2DM2pwKSg0HdWNCzmzdMLGXdIWbSyebVIGN",
+    "yKeBQr9z9sk2n1YywzL59KQZO3KfJxMKTCGDi15gaTTKpMsckJw63oephzczigHK",
+    "Gbr67ykPUwKBgFXRBQqJfla3z1V3/GwRhCoZd99rkJis7V+GKzJnQq8+NbYla4St",
+    "qLc4vRoJME5Snv/hLK/QCq7K+yHo5A4z8rURtpEoeIkPTjF1unWCOtfpu45B8Q2t",
+    "2djpTx+c72jV/kV3NRCQjLhJL+4wZziN4RUJJvf7AlwGRnHeZkdklpxbAoGADDxH",
+    "nMlIAokI7EsvC1OJ7dDreRcg2kEbyDQadoRAwawiGmp33qLEBOLa3FVo5MpJs6S+",
+    "pb7ON6PRVrnyYEhoykDBI7iij9nJKxiec8TUmVYKFUgE742ZZUrCeC11pB2wBBSQ",
+    "hVCYk04/hyA8tt6CRPV42UJJduZBn9Kd7F2WZbMCgYAAmkPH4o7h84iFzgCVmalM",
+    "PpidMUOZHjHnEjwy6rixmCGvfPmJO89vMuI0TuIAOx2msWm0LVTUXlJ32htZgfLh",
+    "sCTcTdyPcx0b40mPFa05LR9icIpMANB2eJXsPZ6kqhJJB+xkLV3zsY6K3jlRVvEE",
+    "gRpuioHBtdbYqMjpc8ZHVw==",
+    "-----END PRIVATE KEY-----",
+    ""
+  ].join("\n")
+};
+
 function parseServiceAccountJson(raw: string | undefined | null): ServiceAccountCredentials | null {
   if (!raw || !raw.trim()) return null;
   try {
@@ -53,17 +93,19 @@ function loadBridgeConfig(): BridgeConfigStore {
 
   return {
     gasWebAppUrl: fileData.gasWebAppUrl || process.env.GAS_WEB_APP_URL || "",
-    spreadsheetId: fileData.spreadsheetId || process.env.DEFAULT_SPREADSHEET_ID || "",
-    pmSpreadsheetId: fileData.pmSpreadsheetId || process.env.DEFAULT_PM_SPREADSHEET_ID || "",
+    spreadsheetId: fileData.spreadsheetId || process.env.DEFAULT_SPREADSHEET_ID || EMBEDDED_SPREADSHEET_ID,
+    pmSpreadsheetId: fileData.pmSpreadsheetId || process.env.DEFAULT_PM_SPREADSHEET_ID || EMBEDDED_PM_SPREADSHEET_ID,
     cmOnCallSpreadsheetId:
       fileData.cmOnCallSpreadsheetId ||
       process.env.DEFAULT_CM_ONCALL_SPREADSHEET_ID ||
-      "19c9vJhO4qMdCP1O7rwWP_aUZyTqQrTwnzWWxtH7zDdE",
+      EMBEDDED_CM_ONCALL_SPREADSHEET_ID,
     drivePdfFolderId: fileData.drivePdfFolderId || process.env.DEFAULT_DRIVE_PDF_FOLDER_ID || "",
     serviceAccount:
       (fileData.serviceAccount && fileData.serviceAccount.client_email && fileData.serviceAccount.private_key
         ? fileData.serviceAccount
-        : null) || parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON)
+        : null) ||
+      parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON) ||
+      EMBEDDED_SERVICE_ACCOUNT
   };
 }
 

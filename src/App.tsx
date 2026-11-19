@@ -29,8 +29,9 @@ const logoUrl = '/logo.svg';
 
 
 const DEFAULT_SETTINGS: SystemSettings = {
-  spreadsheetId: null,
-  pmSpreadsheetId: null,
+  gasWebAppUrl: null,
+  spreadsheetId: '1s2VkerbQ7y0BeHBcdtzkXtsxzn-VR6ZMw2l0p9NCiP8',
+  pmSpreadsheetId: '1wBbN1127iViI_0pXZU2RUoVeuSxQfZsI0qoIgxaaO4s',
   cmOnCallSpreadsheetId: '19c9vJhO4qMdCP1O7rwWP_aUZyTqQrTwnzWWxtH7zDdE',
   lineConfig: {
     channelAccessToken: '',
@@ -151,6 +152,9 @@ export default function App() {
         return { 
           ...DEFAULT_SETTINGS, 
           ...parsed,
+          spreadsheetId: parsed.spreadsheetId || DEFAULT_SETTINGS.spreadsheetId,
+          pmSpreadsheetId: parsed.pmSpreadsheetId || DEFAULT_SETTINGS.pmSpreadsheetId,
+          cmOnCallSpreadsheetId: parsed.cmOnCallSpreadsheetId || DEFAULT_SETTINGS.cmOnCallSpreadsheetId,
           engineers: mergedEngineers,
           hospitals: mergedHospitals,
           equipments: mergedEquipments,
@@ -220,9 +224,9 @@ export default function App() {
         setSettings(prev => {
           const merged: SystemSettings = {
             ...prev,
-            gasWebAppUrl: data.gasWebAppUrl || prev.gasWebAppUrl || null,
-            spreadsheetId: data.spreadsheetId || prev.spreadsheetId || null,
-            pmSpreadsheetId: data.pmSpreadsheetId || prev.pmSpreadsheetId || null,
+            gasWebAppUrl: data.configured ? (data.gasWebAppUrl || null) : (prev.gasWebAppUrl || null),
+            spreadsheetId: data.spreadsheetId || prev.spreadsheetId || DEFAULT_SETTINGS.spreadsheetId,
+            pmSpreadsheetId: data.pmSpreadsheetId || prev.pmSpreadsheetId || DEFAULT_SETTINGS.pmSpreadsheetId,
             cmOnCallSpreadsheetId: data.cmOnCallSpreadsheetId || prev.cmOnCallSpreadsheetId || DEFAULT_SETTINGS.cmOnCallSpreadsheetId,
             drivePdfFolderId: data.drivePdfFolderId || prev.drivePdfFolderId || null
           };
