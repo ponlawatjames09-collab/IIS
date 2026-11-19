@@ -107,6 +107,7 @@ export default function App() {
     hasServiceAccount: false,
     serviceAccountEmail: null
   });
+  const [bridgeEndpointError, setBridgeEndpointError] = useState<string | null>(null);
 
   // App tab navigation state
   const [activeTab, setActiveTab] = useState<'dashboard' | 'service-report' | 'today-operations' | 'engineer-availability' | 'form' | 'tracker' | 'billing' | 'settings' | 'cm-status' | 'cm-oncall' | 'pm-schedule' | 'quotation-reader' | 'quotation-dashboard' | 'dispatch-calendar' | 'pm-service' | 'hospital-map'>('dashboard');
@@ -203,8 +204,17 @@ export default function App() {
 
     const loadServerBridgeConfig = async () => {
       try {
+        setBridgeEndpointError(null);
         const res = await fetch('/api/bridge/config');
-        if (!res.ok) return;
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok) {
+          setBridgeEndpointError(`Backend API /api/bridge/config ตอบกลับ HTTP ${res.status}`);
+          return;
+        }
+        if (!contentType.includes('application/json')) {
+          setBridgeEndpointError('Backend API (/api/bridge/config) ยังไม่ทำงานบนเซิร์ฟเวอร์นี้ (ได้รับ HTML แทน JSON — กรุณาตรวจสอบว่า Push ไฟล์ api/index.ts และ vercel.json ขึ้น GitHub แล้ว Redeploy)');
+          return;
+        }
         const data = await res.json();
         if (!isMounted) return;
 
@@ -238,8 +248,11 @@ export default function App() {
           });
           return merged;
         });
-      } catch (err) {
+      } catch (err: any) {
         console.warn('Could not load server bridge config:', err);
+        if (isMounted) {
+          setBridgeEndpointError(`ไม่สามารถติดต่อ Backend API (/api/bridge/config): ${err?.message || 'Network error'}`);
+        }
       } finally {
         if (isMounted) setIsInitializing(false);
       }
@@ -845,7 +858,11 @@ export default function App() {
                 <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>
                   {!effectiveToken ? (
-                    <><strong>รอตั้งค่าการเชื่อมต่อ Google Sheets (No-Login Bridge):</strong> วาง Google Apps Script Web App URL หรือ Service Account เพื่อให้ทุกเครื่องใช้งานได้ทันทีโดยไม่ต้อง Login</>
+                    bridgeEndpointError ? (
+                      <><strong>เชื่อมต่อ Backend API บนเซิร์ฟเวอร์ไม่สำเร็จ:</strong> {bridgeEndpointError}</>
+                    ) : (
+                      <><strong>รอตั้งค่าการเชื่อมต่อ Google Sheets (No-Login Bridge):</strong> วาง Google Apps Script Web App URL หรือ Service Account เพื่อให้ทุกเครื่องใช้งานได้ทันทีโดยไม่ต้อง Login</>
+                    )
                   ) : (
                     <><strong>Spreadsheet not linked.</strong> Connect a spreadsheet ID to read and persist real-time records.</>
                   )}
