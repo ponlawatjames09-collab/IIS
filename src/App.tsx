@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { Activity, LayoutDashboard, Users, UserCheck, FileSpreadsheet, ClipboardList, Settings as SettingsIcon, LogOut, Database, AlertCircle, Sparkles, RefreshCw, ChevronDown, CheckCircle2, CalendarDays, FormInput, ListTodo, Wrench, PhoneCall, DollarSign , FileText, TrendingUp, MapPin} from 'lucide-react';
+import { Activity, LayoutDashboard, Users, UserCheck, FileSpreadsheet, ClipboardList, Settings as SettingsIcon, LogOut, Database, AlertCircle, Sparkles, RefreshCw, ChevronDown, CheckCircle2, CalendarDays, FormInput, ListTodo, Wrench, PhoneCall, DollarSign, FileText, TrendingUp, MapPin, Link2 } from 'lucide-react';
 import { initAuth, googleSignIn, handleSignOut, getAccessToken } from './firebase';
 import { ServiceJob, SystemSettings, CMStatusRecord } from './types';
 import { fetchMonthlyJobs, fetchYearlyJobs, appendJobToSheet, updateJobInSheet, generateNextJobNumber, MONTHS } from './sheetsService';
+import { BRIDGE_TOKEN_SENTINEL, isBridgeToken, setGoogleBridgeConfig } from './googleBridgeClient';
 
 // Import our modular components
 import Dashboard from './components/Dashboard';
 import JobForm from './components/JobForm';
 import JobTracker from './components/JobTracker';
 import BillingSummary from './components/BillingSummary';
-import Settings from './components/Settings';
+import Settings, { BridgeStatusInfo } from './components/Settings';
 import JobPDFModal from './components/JobPDFModal';
 import CMStatusView from './components/CMStatusView';
 import CMOnCallServiceView from './components/CMOnCallServiceView';
@@ -96,9 +97,15 @@ const DEFAULT_SETTINGS: SystemSettings = {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [needsAuth, setNeedsAuth] = useState(true);
   const [isInitializing, setIsInitializing] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatusInfo>({
+    configured: false,
+    mode: 'none',
+    gasWebAppUrl: '',
+    hasServiceAccount: false,
+    serviceAccountEmail: null
+  });
 
   // App tab navigation state
   const [activeTab, setActiveTab] = useState<'dashboard' | 'service-report' | 'today-operations' | 'engineer-availability' | 'form' | 'tracker' | 'billing' | 'settings' | 'cm-status' | 'cm-oncall' | 'pm-schedule' | 'quotation-reader' | 'quotation-dashboard' | 'dispatch-calendar' | 'pm-service' | 'hospital-map'>('dashboard');
@@ -179,60 +186,123 @@ export default function App() {
   const handleUpdateSettings = (newSettings: SystemSettings) => {
     setSettings(newSettings);
     localStorage.setItem('service_hub_settings', JSON.stringify(newSettings));
+    setGoogleBridgeConfig({
+      gasWebAppUrl: newSettings.gasWebAppUrl || bridgeStatus.gasWebAppUrl || null,
+      serverConfigured: Boolean(bridgeStatus.configured || newSettings.gasWebAppUrl),
+      preferBridge: true
+    });
   };
 
-  // Sync with Firebase Auth state
+  // Load shared No-Login Bridge configuration from server & keep optional Firebase OAuth synced
   useEffect(() => {
+    let isMounted = true;
+
+    const loadServerBridgeConfig = async () => {
+      try {
+        const res = await fetch('/api/bridge/config');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!isMounted) return;
+
+        const serverStatus: BridgeStatusInfo = {
+          configured: Boolean(data.configured),
+          mode: data.mode || 'none',
+          gasWebAppUrl: data.gasWebAppUrl || '',
+          hasServiceAccount: Boolean(data.hasServiceAccount),
+          serviceAccountEmail: data.serviceAccountEmail || null
+        };
+        setBridgeStatus(serverStatus);
+
+        if (data.drivePdfFolderId && !localStorage.getItem('drive_pdf_folder_id')) {
+          localStorage.setItem('drive_pdf_folder_id', data.drivePdfFolderId);
+        }
+
+        setSettings(prev => {
+          const merged: SystemSettings = {
+            ...prev,
+            gasWebAppUrl: data.gasWebAppUrl || prev.gasWebAppUrl || null,
+            spreadsheetId: data.spreadsheetId || prev.spreadsheetId || null,
+            pmSpreadsheetId: data.pmSpreadsheetId || prev.pmSpreadsheetId || null,
+            cmOnCallSpreadsheetId: data.cmOnCallSpreadsheetId || prev.cmOnCallSpreadsheetId || DEFAULT_SETTINGS.cmOnCallSpreadsheetId,
+            drivePdfFolderId: data.drivePdfFolderId || prev.drivePdfFolderId || null
+          };
+          localStorage.setItem('service_hub_settings', JSON.stringify(merged));
+          setGoogleBridgeConfig({
+            gasWebAppUrl: merged.gasWebAppUrl || null,
+            serverConfigured: Boolean(serverStatus.configured || merged.gasWebAppUrl),
+            preferBridge: true
+          });
+          return merged;
+        });
+      } catch (err) {
+        console.warn('Could not load server bridge config:', err);
+      } finally {
+        if (isMounted) setIsInitializing(false);
+      }
+    };
+
+    loadServerBridgeConfig();
+
     const unsubscribe = initAuth(
       (authUser, token) => {
         setUser(authUser);
         setAccessToken(token);
-        setNeedsAuth(false);
-        setIsInitializing(false);
       },
       () => {
         setUser(null);
         setAccessToken(null);
-        setNeedsAuth(true);
-        setIsInitializing(false);
       }
     );
 
     return () => {
+      isMounted = false;
       unsubscribe();
     };
   }, []);
 
-  // Fetch jobs when Month or Spreadsheet ID or Token changes
+  // Keep Google Bridge client synchronized with local settings
   useEffect(() => {
-    if (user && accessToken && settings.spreadsheetId) {
+    setGoogleBridgeConfig({
+      gasWebAppUrl: settings.gasWebAppUrl || bridgeStatus.gasWebAppUrl || null,
+      serverConfigured: Boolean(bridgeStatus.configured || settings.gasWebAppUrl),
+      preferBridge: true
+    });
+  }, [settings.gasWebAppUrl, bridgeStatus.configured, bridgeStatus.gasWebAppUrl]);
+
+  const isBridgeReady = Boolean(bridgeStatus.configured || settings.gasWebAppUrl);
+  const effectiveToken: string | null = accessToken || (isBridgeReady ? BRIDGE_TOKEN_SENTINEL : null);
+
+  // Fetch jobs when Month or Spreadsheet ID or Bridge/Token changes
+  useEffect(() => {
+    if (effectiveToken && settings.spreadsheetId) {
       loadJobs();
     } else {
       setJobs([]);
     }
-  }, [activeMonthYear, settings.spreadsheetId, accessToken]);
+  }, [activeMonthYear, settings.spreadsheetId, effectiveToken]);
 
   useEffect(() => {
-    if (user && accessToken && settings.spreadsheetId) {
+    if (effectiveToken && settings.spreadsheetId) {
       loadYearlyJobs();
     } else {
       setYearlyJobs([]);
     }
-  }, [settings.spreadsheetId, accessToken]);
+  }, [settings.spreadsheetId, effectiveToken]);
 
   const loadYearlyJobs = async () => {
-    if (!accessToken || !settings.spreadsheetId) return;
+    if (!effectiveToken || !settings.spreadsheetId) return;
     try {
-      const fetched = await fetchYearlyJobs(settings.spreadsheetId, accessToken);
+      const fetched = await fetchYearlyJobs(settings.spreadsheetId, effectiveToken);
       setYearlyJobs(fetched);
     } catch (err: any) {
-      if (!(err.message && err.message.includes('401'))) {
+      const msg = err?.message || '';
+      if (!msg.includes('401')) {
         console.error("Failed to load yearly jobs", err);
       }
-      if (err.message && err.message.includes("403")) {
-        setFetchError("Failed to fetch Google Sheets (403 Forbidden). This usually happens because the Google Sheets API is not enabled in your Google Cloud project, or the spreadsheet is not shared with your account.\n\nPlease go to Google Cloud Console, select your Firebase project, and Enable the Google Sheets API.");
+      if (msg.includes("403")) {
+        setFetchError(msg);
       }
-      if (err.message && err.message.includes('401')) {
+      if (msg.includes('401') && !isBridgeToken(effectiveToken)) {
         handleLogout();
         setAuthError('Session expired. Please sign in again.');
       }
@@ -240,23 +310,24 @@ export default function App() {
   };
 
   const loadJobs = async () => {
-    if (!accessToken || !settings.spreadsheetId) return;
+    if (!effectiveToken || !settings.spreadsheetId) return;
     setIsFetchingJobs(true);
     setFetchError(null);
     try {
       let fetched: ServiceJob[] = [];
       if (activeMonthYear === 'YEARLY2026') {
-        fetched = await fetchYearlyJobs(settings.spreadsheetId, accessToken);
+        fetched = await fetchYearlyJobs(settings.spreadsheetId, effectiveToken);
       } else {
-        fetched = await fetchMonthlyJobs(settings.spreadsheetId, activeMonthYear, accessToken);
+        fetched = await fetchMonthlyJobs(settings.spreadsheetId, activeMonthYear, effectiveToken);
       }
       setJobs(fetched);
     } catch (err: any) {
-      if (err.message && err.message.includes('401')) {
+      const msg = err?.message || '';
+      if (msg.includes('401') && !isBridgeToken(effectiveToken)) {
         handleLogout();
         setAuthError('Session expired. Please sign in again.');
       } else {
-        if (err.message && err.message.includes("403")) { setFetchError("Failed to fetch Google Sheets (403 Forbidden). This usually happens because the Google Sheets API is not enabled in your Google Cloud project, or the spreadsheet is not shared with your account.\n\nPlease go to Google Cloud Console, select your Firebase project, and Enable the Google Sheets API."); } else { setFetchError(`Could not retrieve records from tab ${activeMonthYear}. Verify that tab exists inside your Linked Spreadsheet.`); }
+        setFetchError(msg || `Could not retrieve records from tab ${activeMonthYear}. Verify that tab exists inside your Linked Spreadsheet.`);
       }
     } finally {
       setIsFetchingJobs(false);
@@ -270,13 +341,12 @@ export default function App() {
       if (result) {
         setUser(result.user);
         setAccessToken(result.accessToken);
-        setNeedsAuth(false);
       }
     } catch (err: any) {
       if (err.code === 'auth/cancelled-popup-request' || (err.message && err.message.includes('auth/cancelled-popup-request'))) {
-        setAuthError('Sign-in popup was cancelled. If you are viewing this inside the editor preview, please click the "Open in new tab" icon (top right) to sign in successfully, as popups may be blocked in the preview window.');
+        setAuthError('Sign-in popup was cancelled.');
       } else if (err.code === 'auth/unauthorized-domain' || (err.message && err.message.includes('auth/unauthorized-domain'))) {
-        setAuthError(`This app domain (${window.location.hostname}) is not authorized for Firebase Auth. Please add it to "Authorized domains" in your Firebase Console > Authentication > Settings.`);
+        setAuthError(`This app domain (${window.location.hostname}) is not authorized for Firebase Auth.`);
       } else {
         setAuthError(err.message || 'Login failed.');
       }
@@ -287,15 +357,14 @@ export default function App() {
     await handleSignOut();
     setUser(null);
     setAccessToken(null);
-    setNeedsAuth(true);
   };
 
   // Calculate next sequential Job ID
   const handleCalculateJobNumber = async (dateStr: string): Promise<string> => {
-    if (!accessToken || !settings.spreadsheetId) {
-      throw new Error("Spreadsheet not connected.");
+    if (!effectiveToken || !settings.spreadsheetId) {
+      throw new Error("Spreadsheet or Bridge not connected.");
     }
-    return await generateNextJobNumber(settings.spreadsheetId, dateStr, accessToken, jobs);
+    return await generateNextJobNumber(settings.spreadsheetId, dateStr, effectiveToken, jobs);
   };
 
   // Trigger Telegram (embedded) + LINE OA notifications
@@ -405,18 +474,14 @@ export default function App() {
 
   // Save or Update Job Callback
   const handleSaveJob = async (job: ServiceJob): Promise<ServiceJob> => {
-    if (!accessToken || !settings.spreadsheetId) {
-      throw new Error("Google Spreadsheet not connected. Establish database first.");
+    if (!effectiveToken || !settings.spreadsheetId) {
+      throw new Error("Google Spreadsheet or Bridge not connected. Configure System Connections first.");
     }
 
     if (editingJob && editingJobIndex !== null) {
       try {
-        // In-place Update in Google Sheets
-        const originalMonth = MONTHS.find(m => m.substring(0, 3) === editingJob.jobNumber.substring(2, 4).toUpperCase()) || activeMonthYear;
-        
-        await updateJobInSheet(settings.spreadsheetId, activeMonthYear, editingJobIndex, job, accessToken);
-        
-        // Update local state
+        await updateJobInSheet(settings.spreadsheetId, activeMonthYear, editingJobIndex, job, effectiveToken);
+
         setJobs(prev => {
           const copy = [...prev];
           copy[editingJobIndex] = job;
@@ -438,7 +503,7 @@ export default function App() {
         setActiveTab('tracker');
         return job;
       } catch (err: any) {
-        if (err.message && err.message.includes('401')) {
+        if (err.message && err.message.includes('401') && !isBridgeToken(effectiveToken)) {
           handleLogout();
           setAuthError('Session expired. Please sign in again.');
         }
@@ -447,23 +512,19 @@ export default function App() {
       }
     } else {
       try {
-        // Calculate freshest job number at the moment of saving to Google Sheets
-        const freshJobNumber = await generateNextJobNumber(settings.spreadsheetId, job.callDate, accessToken, jobs);
+        const freshJobNumber = await generateNextJobNumber(settings.spreadsheetId, job.callDate, effectiveToken, jobs);
         const jobWithFreshNumber = { ...job, jobNumber: freshJobNumber };
 
-        // Append New job in Google Sheets
-        await appendJobToSheet(settings.spreadsheetId, jobWithFreshNumber, accessToken);
-        
-        // Prepend or Append locally
+        await appendJobToSheet(settings.spreadsheetId, jobWithFreshNumber, effectiveToken);
+
         setJobs(prev => [...prev, jobWithFreshNumber]);
         setYearlyJobs(prev => [...prev, jobWithFreshNumber]);
-        
-        // Trigger smartphone Line notification
+
         triggerLineNotification(jobWithFreshNumber, `Job logs created: #${jobWithFreshNumber.jobNumber}`);
         setActiveTab('tracker');
         return jobWithFreshNumber;
       } catch (err: any) {
-        if (err.message && err.message.includes('401')) {
+        if (err.message && err.message.includes('401') && !isBridgeToken(effectiveToken)) {
           handleLogout();
           setAuthError('Session expired. Please sign in again.');
         }
@@ -475,14 +536,14 @@ export default function App() {
 
   // Quick edit status change callback from Tracker Table
   const handleQuickUpdateStatus = async (index: number, newStatus: ServiceJob['jobStatus']) => {
-    if (!accessToken || !settings.spreadsheetId) return;
+    if (!effectiveToken || !settings.spreadsheetId) return;
 
     try {
       const targetJob = jobs[index];
       const updatedJob = { ...targetJob, jobStatus: newStatus };
-      
-      await updateJobInSheet(settings.spreadsheetId, activeMonthYear, index, updatedJob, accessToken);
-      
+
+      await updateJobInSheet(settings.spreadsheetId, activeMonthYear, index, updatedJob, effectiveToken);
+
       setJobs(prev => {
         const copy = [...prev];
         copy[index] = updatedJob;
@@ -498,15 +559,13 @@ export default function App() {
         return prev;
       });
 
-      // Notify line about status update
       triggerLineNotification(updatedJob, `Status updated: ${newStatus}`);
     } catch (err: any) {
-      if (err.message && err.message.includes('401')) {
+      if (err.message && err.message.includes('401') && !isBridgeToken(effectiveToken)) {
         handleLogout();
         setAuthError('Session expired. Please sign in again.');
       } else {
         console.error("Failed to quick update status:", err);
-        alert("Failed to modify job status. Verify internet connection and Sheet ID.");
       }
     }
   };
@@ -522,42 +581,6 @@ export default function App() {
     setEditingJobIndex(null);
     setActiveTab('tracker');
   };
-
-  if (needsAuth) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center p-6 text-slate-100 font-sans">
-        <div className="max-w-md w-full bg-slate-800/80 p-8 rounded-3xl border border-slate-700 shadow-2xl text-center">
-          <Database className="w-12 h-12 text-blue-400 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold mb-2">IIS Call Service</h1>
-          <p className="text-slate-400 text-sm mb-6">
-            Sign in with your Google Account to synchronize data with Google Sheets.
-          </p>
-          
-          <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-left">
-            <h3 className="text-blue-400 font-bold text-sm mb-1">📱 Mobile Users</h3>
-            <p className="text-xs text-slate-300">
-              If you are on a mobile phone or the login popup is blocked, please ensure you open this app in a <strong>New Tab</strong> before logging in.
-            </p>
-          </div>
-
-          <button
-            onClick={() => handleLogin()}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/50"
-          >
-            <div className="bg-white p-1 rounded-full">
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-              </svg>
-            </div>
-            Sign in with Google
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div id="app-shell" className="h-screen bg-slate-950 flex font-sans overflow-hidden">
@@ -775,14 +798,27 @@ export default function App() {
           </div>
 
           {/* SIDEBAR FOOTER ACTION */}
-          <div className="border-t border-slate-800 pt-3">
-            <button
-              onClick={handleLogout}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded text-xs font-semibold text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-all cursor-pointer"
-            >
-              <LogOut className="w-4 h-4" />
-              <span>Sign Out Session</span>
-            </button>
+          <div className="border-t border-slate-800 p-3">
+            {accessToken ? (
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded text-xs font-semibold text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-all cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out Google</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setActiveTab('settings')}
+                className="w-full flex items-center justify-between px-3 py-2 rounded text-xs font-semibold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 transition-all cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  <Link2 className="w-4 h-4 shrink-0" />
+                  <span>{isBridgeReady ? 'No-Login Bridge On' : 'Setup Sheet Bridge'}</span>
+                </span>
+                <span className={`w-2 h-2 rounded-full ${isBridgeReady ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+              </button>
+            )}
           </div>
         </aside>
 
@@ -790,19 +826,23 @@ export default function App() {
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50">
           
           {/* Connection Notice Banner */}
-          {!settings.spreadsheetId && (
-            <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-amber-800 text-xs font-medium flex items-center justify-between shrink-0">
+          {(!effectiveToken || !settings.spreadsheetId) && !isInitializing && (
+            <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-amber-800 text-xs font-medium flex items-center justify-between gap-2 shrink-0">
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>
-                  <strong>Spreadsheet not linked.</strong> Connect a spreadsheet to read and persist real-time records.
+                  {!effectiveToken ? (
+                    <><strong>รอตั้งค่าการเชื่อมต่อ Google Sheets (No-Login Bridge):</strong> วาง Google Apps Script Web App URL หรือ Service Account เพื่อให้ทุกเครื่องใช้งานได้ทันทีโดยไม่ต้อง Login</>
+                  ) : (
+                    <><strong>Spreadsheet not linked.</strong> Connect a spreadsheet ID to read and persist real-time records.</>
+                  )}
                 </span>
               </div>
               <button
                 onClick={() => setActiveTab('settings')}
-                className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wider cursor-pointer transition-colors"
+                className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wider cursor-pointer transition-colors shrink-0"
               >
-                Connect Database
+                {!effectiveToken ? 'Setup Bridge' : 'Connect Database'}
               </button>
             </div>
           )}
@@ -862,7 +902,7 @@ export default function App() {
                 jobs={jobs}
                 yearlyJobs={yearlyJobs}
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
                 activeMonthYear={activeMonthYear}
                 onMonthChange={setActiveMonthYear}
                 onNavigateToTab={setActiveTab}
@@ -873,7 +913,7 @@ export default function App() {
                 jobs={jobs}
                 yearlyJobs={yearlyJobs}
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
                 activeMonthYear={activeMonthYear}
                 onMonthChange={setActiveMonthYear}
                 onNavigateToTab={setActiveTab}
@@ -882,14 +922,14 @@ export default function App() {
             {activeTab === 'today-operations' && (
               <TodayDashboard 
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
               />
             )}
 
             {activeTab === 'engineer-availability' && (
               <EngineerAvailabilityView
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
                 jobs={jobs}
                 yearlyJobs={yearlyJobs}
                 onNavigateToTab={setActiveTab}
@@ -919,7 +959,7 @@ export default function App() {
               <JobTracker
                 jobs={jobs}
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
                 onEditJob={startEditJob}
                 onUpdateStatus={handleQuickUpdateStatus}
                 onTriggerPDF={(job) => setPdfJob(job)}
@@ -930,7 +970,7 @@ export default function App() {
             {activeTab === 'cm-status' && (
               <CMStatusView
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
                 onNotifyLine={triggerCMLineNotification}
                 onOpenCMJob={(hospitalName, equipment, serialNumber, problem) => {
                   setEditingJob(null);
@@ -951,7 +991,7 @@ export default function App() {
             {activeTab === 'cm-oncall' && (
               <CMOnCallServiceView
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
                 onNotifyLine={triggerCMLineNotification}
                 onOpenCMJob={(hospitalName, equipment, serialNumber, problem) => {
                   setEditingJob(null);
@@ -973,7 +1013,7 @@ export default function App() {
             {activeTab === 'pm-schedule' && (
               <PMScheduleView
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
                 yearlyJobs={jobs}
                 onOpenPMJob={handleOpenPMJob}
                 onNavigateToMap={() => setActiveTab('hospital-map')}
@@ -986,18 +1026,15 @@ export default function App() {
             {activeTab === 'quotation-reader' && (
               <QuotationReader 
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
               />
             )}
                       
             {activeTab === 'pm-service' && (
               <PMServiceTab
                 settings={settings}
-                accessToken={accessToken}
-                onUpdateSettings={(newSettings) => {
-                  setSettings(newSettings);
-                  localStorage.setItem('service_hub_settings', JSON.stringify(newSettings));
-                }}
+                accessToken={effectiveToken}
+                onUpdateSettings={handleUpdateSettings}
                 onOpenPMJob={handleOpenPMJob}
               />
             )}
@@ -1005,14 +1042,14 @@ export default function App() {
             {activeTab === 'dispatch-calendar' && (
             <DispatchCalendarView 
               settings={settings}
-              accessToken={accessToken}
+              accessToken={effectiveToken}
             />
           )}
 
           {activeTab === 'hospital-map' && (
             <ThailandHospitalMapView
               settings={settings}
-              accessToken={accessToken}
+              accessToken={effectiveToken}
               jobs={jobs}
               onOpenNewJob={(hospitalName, equipment, sn) => {
                 setEditingJob(null);
@@ -1032,7 +1069,7 @@ export default function App() {
           {activeTab === 'quotation-dashboard' && (
               <QuotationDashboard 
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
               />
             )}
 
@@ -1040,9 +1077,13 @@ export default function App() {
             {activeTab === 'settings' && (
               <Settings
                 settings={settings}
-                accessToken={accessToken}
+                accessToken={effectiveToken}
                 onUpdateSettings={handleUpdateSettings}
-                
+                bridgeStatus={bridgeStatus}
+                onBridgeStatusChange={setBridgeStatus}
+                isOAuthSignedIn={Boolean(accessToken)}
+                onGoogleSignIn={handleLogin}
+                onGoogleSignOut={handleLogout}
               />
             )}
 
@@ -1051,13 +1092,22 @@ export default function App() {
         {/* SYSTEM HARD-DENSITY ENTERPRISE FOOTER */}
       <footer className="hidden md:flex h-8 bg-slate-200 border-t border-slate-300 items-center justify-between px-4 text-[10px] font-semibold text-slate-500 font-mono shrink-0 select-none">
         <div className="flex items-center gap-3">
-          <span className="flex h-2 w-2 rounded-full bg-green-500"></span>
-          <span>System Ready • Latency: 24ms • Google API: Authorized</span>
+          <span className={`flex h-2 w-2 rounded-full ${effectiveToken ? 'bg-green-500' : 'bg-amber-500'}`}></span>
+          <span>
+            System Ready • Auth:{' '}
+            {accessToken
+              ? 'Google OAuth'
+              : bridgeStatus.mode === 'service_account'
+              ? 'No-Login Service Account'
+              : isBridgeReady
+              ? 'No-Login Apps Script Bridge'
+              : 'Bridge Setup Required'}
+          </span>
         </div>
         <div className="hidden md:flex items-center gap-4">
           <span>Active Tab: {activeTab.toUpperCase()}</span>
           <span>•</span>
-          <span>Buffer: OK</span>
+          <span>Real-time Sync</span>
         </div>
       </footer>
 
@@ -1118,20 +1168,16 @@ export default function App() {
           <SettingsIcon className="w-5 h-5" />
           <span>Settings</span>
         </button>
-        <button onClick={handleLogout} className="flex flex-col items-center justify-center gap-1 w-full h-full text-rose-500 hover:text-rose-400">
-          <LogOut className="w-5 h-5" />
-          <span>Logout</span>
-        </button>
       </div>
 
       </main>
 
       {/* PDF MODAL WORKSPACE OVERLAY */}
-      {pdfJob && accessToken && (
+      {pdfJob && effectiveToken && (
         <JobPDFModal
           job={pdfJob}
           onClose={() => setPdfJob(null)}
-          accessToken={accessToken}
+          accessToken={effectiveToken}
         />
       )}
 

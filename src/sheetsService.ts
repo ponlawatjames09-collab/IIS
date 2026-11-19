@@ -1,4 +1,5 @@
 import { ServiceJob } from './types';
+import { callGoogleBridge, shouldUseBridge } from './googleBridgeClient';
 
 const HEADERS = [
   "Job Number", "Call Date", "Job Status", "PM Cycle", "Job Type", 
@@ -12,6 +13,272 @@ export const MONTHS = [
   "JAN2026", "FEB2026", "MAR2026", "APR2026", "MAY2026", "JUN2026",
   "JUL2026", "AUG2026", "SEP2026", "OCT2026", "NOV2026", "DEC2026"
 ];
+
+// ==========================================================
+// Dual-Mode Google Sheets Transport (No-Login Bridge / OAuth)
+// ==========================================================
+
+interface ValuesResponse {
+  ok: boolean;
+  status: number;
+  values: any[][];
+  error?: string;
+}
+
+interface MutationResponse {
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
+const sheetsCreateSpreadsheet = async (
+  title: string,
+  sheetTitles: string[],
+  headers: string[],
+  accessToken: string
+): Promise<string> => {
+  if (shouldUseBridge(accessToken)) {
+    const res = await callGoogleBridge<{ spreadsheetId: string }>('createSpreadsheet', {
+      title,
+      sheetTitles,
+      headers
+    });
+    if (!res.ok || !res.data?.spreadsheetId) {
+      throw new Error(`Failed to create spreadsheet: ${res.error || `HTTP ${res.status}`}`);
+    }
+    return res.data.spreadsheetId;
+  }
+
+  const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      properties: { title },
+      sheets: sheetTitles.map(t => ({ properties: { title: t } }))
+    })
+  });
+
+  if (!createRes.ok) {
+    const errTxt = await createRes.text();
+    throw new Error(`Failed to create spreadsheet: ${errTxt}`);
+  }
+
+  const createdSheet = await createRes.json();
+  const spreadsheetId = createdSheet.spreadsheetId;
+
+  const batchRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      valueInputOption: 'RAW',
+      data: sheetTitles.map(m => ({
+        range: `${m}!A1:BC1`,
+        values: [headers]
+      }))
+    })
+  });
+
+  if (!batchRes.ok) {
+    const errTxt = await batchRes.text();
+    throw new Error(`Failed to set spreadsheet headers: ${errTxt}`);
+  }
+
+  return spreadsheetId;
+};
+
+const sheetsGetMeta = async (spreadsheetId: string, accessToken: string): Promise<{ sheets: Array<{ properties: { title: string } }> }> => {
+  if (shouldUseBridge(accessToken)) {
+    const res = await callGoogleBridge<{ sheets: Array<{ properties: { title: string } }> }>('getMetadata', { spreadsheetId });
+    if (!res.ok || !res.data) {
+      throw new Error(`Failed to fetch spreadsheet metadata. Code: ${res.status}${res.error ? ` - ${res.error}` : ''}`);
+    }
+    return res.data;
+  }
+
+  const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+  if (!metaRes.ok) {
+    let errMsg = `Code: ${metaRes.status}`;
+    try {
+      const errJson = await metaRes.json();
+      if (errJson.error && errJson.error.message) errMsg += ` - ${errJson.error.message}`;
+    } catch {}
+    throw new Error(`Failed to fetch spreadsheet metadata. ${errMsg}. If you get 403, please make sure the Google Sheets API is enabled for this project and you have access to the sheet.`);
+  }
+  return await metaRes.json();
+};
+
+const sheetsGetValues = async (spreadsheetId: string, rawRange: string, accessToken: string): Promise<ValuesResponse> => {
+  if (shouldUseBridge(accessToken)) {
+    const res = await callGoogleBridge<{ values?: any[][] }>('getValues', { spreadsheetId, range: rawRange });
+    return {
+      ok: res.ok,
+      status: res.status,
+      values: res.data?.values || [],
+      error: res.error
+    };
+  }
+
+  const encoded = encodeURIComponent(rawRange);
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encoded}`, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+  if (!res.ok) {
+    let errText = `Code: ${res.status}`;
+    try {
+      const errJson = await res.json();
+      if (errJson.error?.message) errText += ` - ${errJson.error.message}`;
+    } catch {}
+    return { ok: false, status: res.status, values: [], error: errText };
+  }
+  const data = await res.json();
+  return { ok: true, status: 200, values: data.values || [] };
+};
+
+const sheetsBatchGetValues = async (
+  spreadsheetId: string,
+  rawRanges: string[],
+  accessToken: string
+): Promise<{ valueRanges: Array<{ range?: string; values?: any[][] }> }> => {
+  if (rawRanges.length === 0) return { valueRanges: [] };
+
+  if (shouldUseBridge(accessToken)) {
+    const res = await callGoogleBridge<{ valueRanges?: Array<{ range?: string; values?: any[][] }> }>('batchGetValues', {
+      spreadsheetId,
+      ranges: rawRanges
+    });
+    if (!res.ok || !res.data) {
+      throw new Error(`Failed to fetch values from Google Sheet ranges. Code: ${res.status}${res.error ? ` - ${res.error}` : ''}`);
+    }
+    return { valueRanges: res.data.valueRanges || [] };
+  }
+
+  const rangesQuery = rawRanges.map(r => encodeURIComponent(r)).join('&ranges=');
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=${rangesQuery}`, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${accessToken}` }
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch values from Google Sheet ranges. Code: ${res.status}`);
+  }
+  const data = await res.json();
+  return { valueRanges: data.valueRanges || [] };
+};
+
+const sheetsAppendValues = async (
+  spreadsheetId: string,
+  rawRange: string,
+  values: any[][],
+  accessToken: string
+): Promise<MutationResponse> => {
+  if (shouldUseBridge(accessToken)) {
+    const res = await callGoogleBridge('appendValues', { spreadsheetId, range: rawRange, values });
+    return { ok: res.ok, status: res.status, error: res.error };
+  }
+
+  const encoded = encodeURIComponent(rawRange);
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encoded}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ values })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    return { ok: false, status: res.status, error: errText };
+  }
+  return { ok: true, status: 200 };
+};
+
+const sheetsUpdateValues = async (
+  spreadsheetId: string,
+  rawRange: string,
+  values: any[][],
+  accessToken: string
+): Promise<MutationResponse> => {
+  if (shouldUseBridge(accessToken)) {
+    const res = await callGoogleBridge('updateValues', { spreadsheetId, range: rawRange, values });
+    return { ok: res.ok, status: res.status, error: res.error };
+  }
+
+  const encoded = encodeURIComponent(rawRange);
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encoded}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ values })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    return { ok: false, status: res.status, error: errText };
+  }
+  return { ok: true, status: 200 };
+};
+
+const sheetsClearValues = async (
+  spreadsheetId: string,
+  rawRange: string,
+  accessToken: string
+): Promise<MutationResponse> => {
+  if (shouldUseBridge(accessToken)) {
+    const res = await callGoogleBridge('clearValues', { spreadsheetId, range: rawRange });
+    return { ok: res.ok, status: res.status, error: res.error };
+  }
+
+  const encoded = encodeURIComponent(rawRange);
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encoded}:clear`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    }
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    return { ok: false, status: res.status, error: errText };
+  }
+  return { ok: true, status: 200 };
+};
+
+const sheetsAddSheet = async (
+  spreadsheetId: string,
+  title: string,
+  accessToken: string
+): Promise<MutationResponse> => {
+  if (shouldUseBridge(accessToken)) {
+    const res = await callGoogleBridge('addSheet', { spreadsheetId, title });
+    return { ok: res.ok, status: res.status, error: res.error };
+  }
+
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      requests: [{ addSheet: { properties: { title } } }]
+    })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    return { ok: false, status: res.status, error: errText };
+  }
+  return { ok: true, status: 200 };
+};
 
 export const normalize24hTime = (val: any): string => {
   if (!val) return '';
@@ -169,137 +436,48 @@ export const mapJobToRow = (job: ServiceJob): any[] => {
 };
 
 /**
- * Creates a brand new Spreadsheet in the user's Google Drive with monthly tabs and standard headers.
+ * Creates a brand new Spreadsheet in Google Drive with monthly tabs and standard headers.
  */
 export const createSpreadsheet = async (accessToken: string): Promise<string> => {
-  try {
-    // 1. Create spreadsheet with 12 sheets
-    const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        properties: {
-          title: "Service Job Hub - 2026"
-        },
-        sheets: MONTHS.map(month => ({
-          properties: {
-            title: month
-          }
-        }))
-      })
-    });
-
-    if (!createRes.ok) {
-      const errTxt = await createRes.text();
-      throw new Error(`Failed to create spreadsheet: ${errTxt}`);
-    }
-
-    const createdSheet = await createRes.json();
-    const spreadsheetId = createdSheet.spreadsheetId;
-
-    // 2. Initialize headers for each of the 12 tabs
-    const batchRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        valueInputOption: 'RAW',
-        data: MONTHS.map(month => ({
-          range: `${month}!A1:BC1`,
-          values: [HEADERS]
-        }))
-      })
-    });
-
-    if (!batchRes.ok) {
-      const errTxt = await batchRes.text();
-      throw new Error(`Failed to set spreadsheet headers: ${errTxt}`);
-    }
-
-    return spreadsheetId;
-  } catch (error) {
-    
-    throw error;
-  }
+  return await sheetsCreateSpreadsheet("Service Job Hub - 2026", MONTHS, HEADERS, accessToken);
 };
 
 /**
- * Fetches all jobs for all months in the year using batchGet.
+ * Tests connection to a spreadsheet by reading A1:Z1.
  */
 export const testSheetsConnection = async (
   spreadsheetId: string,
   accessToken: string
 ): Promise<string[]> => {
-  try {
-    const range = encodeURIComponent('A1:Z1');
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-    if (!res.ok) {
-      let errMsg = `Code: ${res.status}`; try { const errJson = await res.json(); if (errJson.error && errJson.error.message) { errMsg += ` - ${errJson.error.message}`; } } catch (e) { } throw new Error(`Failed to test Sheets connection. ${errMsg}. If you get 403, please make sure the Google Sheets API is enabled for this project and you have access to the sheet.`);
-    }
-    const data = await res.json();
-    return data.values && data.values[0] ? data.values[0] : [];
-  } catch (error) {
-    
-    throw error;
+  const res = await sheetsGetValues(spreadsheetId, 'A1:Z1', accessToken);
+  if (!res.ok) {
+    throw new Error(`Failed to test Sheets connection. ${res.error || `Code: ${res.status}`}`);
   }
+  return res.values && res.values[0] ? res.values[0] : [];
 };
 
 export const fetchYearlyJobs = async (
   spreadsheetId: string,
   accessToken: string
 ): Promise<ServiceJob[]> => {
-  try {
-    const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    if (!metaRes.ok) {
-      let errMsg = `Code: ${metaRes.status}`; try { const errJson = await metaRes.json(); if (errJson.error && errJson.error.message) { errMsg += ` - ${errJson.error.message}`; } } catch (e) { } throw new Error(`Failed to fetch spreadsheet metadata. ${errMsg}. If you get 403, please make sure the Google Sheets API is enabled for this project and you have access to the sheet.`);
+  const metaData = await sheetsGetMeta(spreadsheetId, accessToken);
+  const existingSheetTitles = (metaData.sheets || []).map((s: any) => s.properties.title);
+
+  const validMonths = MONTHS.filter(m => existingSheetTitles.includes(m));
+  if (validMonths.length === 0) return [];
+
+  const ranges = validMonths.map(m => `${m}!A2:BC`);
+  const data = await sheetsBatchGetValues(spreadsheetId, ranges, accessToken);
+  if (!data.valueRanges) return [];
+
+  const allJobs: ServiceJob[] = [];
+  data.valueRanges.forEach((rangeObj: any) => {
+    if (rangeObj.values && rangeObj.values.length > 0) {
+      allJobs.push(...rangeObj.values.map(mapRowToJob));
     }
-    const metaData = await metaRes.json();
-    const existingSheetTitles = metaData.sheets.map((s: any) => s.properties.title);
+  });
 
-    const validMonths = MONTHS.filter(m => existingSheetTitles.includes(m));
-    if (validMonths.length === 0) return [];
-
-    const ranges = validMonths.map(m => `${m}!A2:BC`).join('&ranges=');
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=${ranges}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-
-    if (!res.ok) {
-      throw new Error(`Failed to fetch values from Google Sheet ranges. Code: ${res.status}`);
-    }
-
-    const data = await res.json();
-    if (!data.valueRanges) {
-      return [];
-    }
-
-    const allJobs: ServiceJob[] = [];
-    data.valueRanges.forEach((rangeObj: any) => {
-      if (rangeObj.values && rangeObj.values.length > 0) {
-        allJobs.push(...rangeObj.values.map(mapRowToJob));
-      }
-    });
-
-    return allJobs;
-  } catch (error) {
-    throw error;
-  }
+  return allJobs;
 };
 
 /**
@@ -310,32 +488,17 @@ export const fetchMonthlyJobs = async (
   monthYear: string, // e.g. "JAN2026"
   accessToken: string
 ): Promise<ServiceJob[]> => {
-  try {
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${monthYear}!A2:BC`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-
+  const res = await sheetsGetValues(spreadsheetId, `${monthYear}!A2:BC`, accessToken);
+  if (!res.ok) {
     if (res.status === 404 || res.status === 400) {
-      // Tab might not exist or be empty yet, return empty list
       return [];
     }
-
-    if (!res.ok) {
-      throw new Error(`Failed to fetch values from Google Sheet range. Code: ${res.status}`);
-    }
-
-    const data = await res.json();
-    if (!data.values || data.values.length === 0) {
-      return [];
-    }
-
-    return data.values.map(mapRowToJob);
-  } catch (error) {
-    throw error;
+    throw new Error(`Failed to fetch values from Google Sheet range. ${res.error || `Code: ${res.status}`}`);
   }
+  if (!res.values || res.values.length === 0) {
+    return [];
+  }
+  return res.values.map(mapRowToJob);
 };
 
 /**
@@ -349,58 +512,16 @@ export const appendJobToSheet = async (
   const monthYear = getMonthYearFromDate(job.callDate);
   const rowValues = mapJobToRow(job);
 
-  let res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${monthYear}!A1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      values: [rowValues]
-    })
-  });
+  let res = await sheetsAppendValues(spreadsheetId, `${monthYear}!A1`, [rowValues], accessToken);
 
   if (!res.ok && (res.status === 400 || res.status === 404)) {
-    // Attempt to create the tab
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        requests: [{ addSheet: { properties: { title: monthYear } } }]
-      })
-    });
-    
-    // Attempt to write headers
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${monthYear}!A1:BC1?valueInputOption=USER_ENTERED`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        values: [HEADERS]
-      })
-    });
-
-    // Retry appending row
-    res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${monthYear}!A1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        values: [rowValues]
-      })
-    });
+    await sheetsAddSheet(spreadsheetId, monthYear, accessToken);
+    await sheetsUpdateValues(spreadsheetId, `${monthYear}!A1:BC1`, [HEADERS], accessToken);
+    res = await sheetsAppendValues(spreadsheetId, `${monthYear}!A1`, [rowValues], accessToken);
   }
 
   if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Failed to save job log to Google Sheets: ${errText}`);
+    throw new Error(`Failed to save job log to Google Sheets: ${res.error || `Code: ${res.status}`}`);
   }
 };
 
@@ -415,34 +536,18 @@ export const updateJobInSheet = async (
   accessToken: string
 ): Promise<void> => {
   const currentMonthYear = getMonthYearFromDate(job.callDate);
-  
+
   if (originalMonthYear !== currentMonthYear) {
-    // If the month changed, we must delete from original sheet and append to new sheet!
-    // Since Google Sheets doesn't have a direct "delete row" API easily, we can clear the values of the row first,
-    // or we can append to the new sheet and mark the old one as "Cancelled" / clear it.
-    // For safety, let's append to the new sheet and clear the original row.
     await appendJobToSheet(spreadsheetId, job, accessToken);
     await clearRowInSheet(spreadsheetId, originalMonthYear, rowIdx, accessToken);
   } else {
-    // Month didn't change, perform in-place update
     const sheetRowNumber = rowIdx + 2;
     const rowValues = mapJobToRow(job);
     const range = `${currentMonthYear}!A${sheetRowNumber}:BC${sheetRowNumber}`;
-
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        values: [rowValues]
-      })
-    });
+    const res = await sheetsUpdateValues(spreadsheetId, range, [rowValues], accessToken);
 
     if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Failed to update job: ${errText}`);
+      throw new Error(`Failed to update job: ${res.error || `Code: ${res.status}`}`);
     }
   }
 };
@@ -458,20 +563,10 @@ export const clearRowInSheet = async (
 ): Promise<void> => {
   const sheetRowNumber = rowIdx + 2;
   const range = `${monthYear}!A${sheetRowNumber}:BC${sheetRowNumber}`;
-  
-  // Instead of completely clearing (which leaves blank lines in the middle), we can mark the row status as "Cancelled" 
-  // or clear its values. Clearing is safer for standard REST range clearing.
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:clear`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    }
-  });
+  const res = await sheetsClearValues(spreadsheetId, range, accessToken);
 
   if (!res.ok) {
-    const errTxt = await res.text();
-    throw new Error(`Failed to clear row: ${errTxt}`);
+    throw new Error(`Failed to clear row: ${res.error || `Code: ${res.status}`}`);
   }
 };
 
@@ -602,48 +697,34 @@ export const fetchCMStatusRecords = async (
   spreadsheetId: string,
   accessToken: string
 ): Promise<import('./types').CMStatusRecord[]> => {
-  try {
-    const range = encodeURIComponent("'DATABASE TARGET'!A2:K");
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-    if (!res.ok) {
-      if (res.status === 400 || res.status === 404) {
-        let errStr = '';
-        try { const j = await res.json(); errStr = JSON.stringify(j); } catch(e){}
-        let tabs = [];
-        try { tabs = await fetchSpreadsheetTabs(spreadsheetId, accessToken); } catch(e) {}
-        throw new Error("Tab 'DATABASE TARGET USER' not found. Available tabs in this sheet are: " + tabs.join(", ") + ". Details: " + errStr);
-      }
-      let errMsg = `Code: ${res.status}`; try { const errJson = await res.json(); if (errJson.error && errJson.error.message) { errMsg += ` - ${errJson.error.message}`; } } catch (e) { } throw new Error(`Failed to fetch CMStatus records. ${errMsg}. If you get 403, please make sure the Google Sheets API is enabled for this project and you have access to the sheet.`);
+  const res = await sheetsGetValues(spreadsheetId, "'DATABASE TARGET'!A2:K", accessToken);
+  if (!res.ok) {
+    if (res.status === 400 || res.status === 404) {
+      let tabs: string[] = [];
+      try { tabs = await fetchSpreadsheetTabs(spreadsheetId, accessToken); } catch {}
+      throw new Error("Tab 'DATABASE TARGET' not found. Available tabs in this sheet are: " + tabs.join(", ") + (res.error ? `. Details: ${res.error}` : ''));
     }
-    const data = await res.json();
-    if (!data.values || data.values.length === 0) {
-      return [];
-    }
-    return data.values.map((row: any[], index: number) => ({
-      hospital: row[0] ? String(row[0]) : '',
-      namecontract: row[1] ? String(row[1]) : '',
-      phonecontract: row[2] ? String(row[2]) : '',
-      equipment: row[3] ? String(row[3]) : '',
-      problem: row[4] ? String(row[4]) : '',
-      image: row[5] ? String(row[5]) : '',
-      status: row[6] ? String(row[6]) : 'Pending',
-      warranty: row[7] ? String(row[7]) : '',
-      reportDate: row[8] ? String(row[8]) : '',
-      engineer: row[9] ? String(row[9]) : '',
-      serialNumber: row[10] ? String(row[10]) : '',
-      ibDate: row[11] ? String(row[11]) : '',
-      expiryDate: row[12] ? String(row[12]) : '',
-      rowIndex: index + 2,
-    }));
-  } catch (error) {
-    
-    throw error;
+    throw new Error(`Failed to fetch CMStatus records. ${res.error || `Code: ${res.status}`}`);
   }
+  if (!res.values || res.values.length === 0) {
+    return [];
+  }
+  return res.values.map((row: any[], index: number) => ({
+    hospital: row[0] ? String(row[0]) : '',
+    namecontract: row[1] ? String(row[1]) : '',
+    phonecontract: row[2] ? String(row[2]) : '',
+    equipment: row[3] ? String(row[3]) : '',
+    problem: row[4] ? String(row[4]) : '',
+    image: row[5] ? String(row[5]) : '',
+    status: row[6] ? String(row[6]) : 'Pending',
+    warranty: row[7] ? String(row[7]) : '',
+    reportDate: row[8] ? String(row[8]) : '',
+    engineer: row[9] ? String(row[9]) : '',
+    serialNumber: row[10] ? String(row[10]) : '',
+    ibDate: row[11] ? String(row[11]) : '',
+    expiryDate: row[12] ? String(row[12]) : '',
+    rowIndex: index + 2,
+  }));
 };
 
 /**
@@ -654,119 +735,66 @@ export const appendCMStatusRecord = async (
   accessToken: string,
   record: import('./types').CMStatusRecord
 ): Promise<void> => {
-  try {
-    const values = [
-      [
-        record.hospital,
-        record.namecontract,
-        record.phonecontract,
-        record.equipment,
-        record.problem,
-        record.image,
-        record.status || 'Repair request',
-        record.warranty || '',
-        record.reportDate || '',
-        record.engineer || '',
-        record.serialNumber || ''
-      ]
-    ];
-    
-    const range = encodeURIComponent("'DATABASE TARGET'!A1");
-    let res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ values })
-    });
-    
-    if (!res.ok) {
-      if (res.status === 400) {
-        // Sheet might not exist. Try creating it.
-        const createSheetRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            requests: [{ addSheet: { properties: { title: 'DATABASE TARGET' } } }]
-          })
-        });
-        
-        if (createSheetRes.ok) {
-          // Setup headers
-          const headerRange = encodeURIComponent("'DATABASE TARGET'!A1:K1");
-          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${headerRange}?valueInputOption=USER_ENTERED`, {
-            method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              values: [["Hospital", "Contact Name", "Contact Phone", "Equipment", "Problem", "Image URL", "Status", "Warranty", "Report Date", "Engineer", "Serial Number"]]
-            })
-          });
+  const values = [
+    [
+      record.hospital,
+      record.namecontract,
+      record.phonecontract,
+      record.equipment,
+      record.problem,
+      record.image,
+      record.status || 'Repair request',
+      record.warranty || '',
+      record.reportDate || '',
+      record.engineer || '',
+      record.serialNumber || ''
+    ]
+  ];
 
-          // Retry append
-          res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ values })
-          });
-        }
-      }
-      
-      if (!res.ok) {
-        throw new Error(`Failed to append CMStatus record. Code: ${res.status}`);
-      }
+  let res = await sheetsAppendValues(spreadsheetId, "'DATABASE TARGET'!A1", values, accessToken);
+
+  if (!res.ok && (res.status === 400 || res.status === 404)) {
+    const createSheetRes = await sheetsAddSheet(spreadsheetId, 'DATABASE TARGET', accessToken);
+    if (createSheetRes.ok) {
+      await sheetsUpdateValues(
+        spreadsheetId,
+        "'DATABASE TARGET'!A1:K1",
+        [["Hospital", "Contact Name", "Contact Phone", "Equipment", "Problem", "Image URL", "Status", "Warranty", "Report Date", "Engineer", "Serial Number"]],
+        accessToken
+      );
+      res = await sheetsAppendValues(spreadsheetId, "'DATABASE TARGET'!A1", values, accessToken);
     }
-  } catch (error) {
-    console.error("appendCMStatusRecord error:", error);
-    throw error;
+  }
+
+  if (!res.ok) {
+    throw new Error(`Failed to append CMStatus record. ${res.error || `Code: ${res.status}`}`);
   }
 };
+
 export const updateCMStatusRecord = async (
   spreadsheetId: string,
   accessToken: string,
   rowIndex: number,
   record: import("./types").CMStatusRecord
 ): Promise<void> => {
-  try {
-    const values = [
-      [
-        record.hospital,
-        record.namecontract,
-        record.phonecontract,
-        record.equipment,
-        record.problem,
-        record.image,
-        record.status || "Repair request",
-        record.warranty || "",
-        record.reportDate || "",
-        record.engineer || "",
-        record.serialNumber || ""
-      ]
-    ];
-    const range = encodeURIComponent(`'DATABASE TARGET'!A${rowIndex}:K${rowIndex}`);
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
-      method: "PUT",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ values })
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to update CMStatus record. Code: ${res.status}`);
-    }
-  } catch (error) {
-    console.error("updateCMStatusRecord error:", error);
-    throw error;
+  const values = [
+    [
+      record.hospital,
+      record.namecontract,
+      record.phonecontract,
+      record.equipment,
+      record.problem,
+      record.image,
+      record.status || "Repair request",
+      record.warranty || "",
+      record.reportDate || "",
+      record.engineer || "",
+      record.serialNumber || ""
+    ]
+  ];
+  const res = await sheetsUpdateValues(spreadsheetId, `'DATABASE TARGET'!A${rowIndex}:K${rowIndex}`, values, accessToken);
+  if (!res.ok) {
+    throw new Error(`Failed to update CMStatus record. ${res.error || `Code: ${res.status}`}`);
   }
 };
 
@@ -781,24 +809,17 @@ export const fetchPMScheduleRecords = async (
     "PM Contract C-Arm",
     "PM Contract Ultrasound"
   ];
-  
+
   const allRecords: import('./types').PMScheduleItem[] = [];
 
   for (const sheet of sheets) {
     try {
-      const range = encodeURIComponent(`'${sheet}'!A1:ZZ`);
-      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
-        }
-      });
+      const res = await sheetsGetValues(spreadsheetId, `'${sheet}'!A1:ZZ`, accessToken);
       if (!res.ok) {
         console.warn(`Skipping sheet ${sheet}. Status: ${res.status}`);
         continue;
       }
-      const data = await res.json();
-      const rows = data.values || [];
+      const rows = res.values || [];
       if (rows.length < 3) continue;
 
       let monthRowIndex = -1;
@@ -969,47 +990,34 @@ export const fetchCMOnCallRecords = async (
   spreadsheetId: string,
   accessToken: string
 ): Promise<import('./types').CMStatusRecord[]> => {
-  try {
-    const range = encodeURIComponent("'DATABASE TARGET USER'!A2:M");
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-    if (!res.ok) {
-      if (res.status === 400 || res.status === 404) {
-        let errStr = '';
-        try { const j = await res.json(); errStr = JSON.stringify(j); } catch(e){}
-        let tabs = [];
-        try { tabs = await fetchSpreadsheetTabs(spreadsheetId, accessToken); } catch(e) {}
-        throw new Error("Tab 'DATABASE TARGET USER' not found. Available tabs in this sheet are: " + tabs.join(", ") + ". Details: " + errStr);
-      }
-      let errMsg = `Code: ${res.status}`; try { const errJson = await res.json(); if (errJson.error && errJson.error.message) { errMsg += ` - ${errJson.error.message}`; } } catch (e) { } throw new Error(`Failed to fetch CMOnCall records. ${errMsg}`);
+  const res = await sheetsGetValues(spreadsheetId, "'DATABASE TARGET USER'!A2:M", accessToken);
+  if (!res.ok) {
+    if (res.status === 400 || res.status === 404) {
+      let tabs: string[] = [];
+      try { tabs = await fetchSpreadsheetTabs(spreadsheetId, accessToken); } catch {}
+      throw new Error("Tab 'DATABASE TARGET USER' not found. Available tabs in this sheet are: " + tabs.join(", ") + (res.error ? `. Details: ${res.error}` : ''));
     }
-    const data = await res.json();
-    if (!data.values || data.values.length === 0) {
-      return [];
-    }
-    return data.values.map((row: any[], index: number) => ({
-      hospital: row[0] ? String(row[0]) : '',
-      namecontract: row[1] ? String(row[1]) : '',
-      phonecontract: row[2] ? String(row[2]) : '',
-      equipment: row[3] ? String(row[3]) : '',
-      problem: row[4] ? String(row[4]) : '',
-      image: row[5] ? String(row[5]) : '',
-      status: row[6] ? String(row[6]) : 'Pending',
-      warranty: row[7] ? String(row[7]) : '',
-      reportDate: row[8] ? String(row[8]) : '',
-      engineer: row[9] ? String(row[9]) : '',
-      serialNumber: row[10] ? String(row[10]) : '',
-      ibDate: row[11] ? String(row[11]) : '',
-      expiryDate: row[12] ? String(row[12]) : '',
-      rowIndex: index + 2,
-    }));
-  } catch (error) {
-    throw error;
+    throw new Error(`Failed to fetch CMOnCall records. ${res.error || `Code: ${res.status}`}`);
   }
+  if (!res.values || res.values.length === 0) {
+    return [];
+  }
+  return res.values.map((row: any[], index: number) => ({
+    hospital: row[0] ? String(row[0]) : '',
+    namecontract: row[1] ? String(row[1]) : '',
+    phonecontract: row[2] ? String(row[2]) : '',
+    equipment: row[3] ? String(row[3]) : '',
+    problem: row[4] ? String(row[4]) : '',
+    image: row[5] ? String(row[5]) : '',
+    status: row[6] ? String(row[6]) : 'Pending',
+    warranty: row[7] ? String(row[7]) : '',
+    reportDate: row[8] ? String(row[8]) : '',
+    engineer: row[9] ? String(row[9]) : '',
+    serialNumber: row[10] ? String(row[10]) : '',
+    ibDate: row[11] ? String(row[11]) : '',
+    expiryDate: row[12] ? String(row[12]) : '',
+    rowIndex: index + 2,
+  }));
 };
 
 /**
@@ -1020,44 +1028,39 @@ export const appendCMOnCallRecord = async (
   accessToken: string,
   record: import('./types').CMStatusRecord
 ): Promise<void> => {
-  try {
-    const values = [
-      [
-        record.hospital,
-        record.namecontract,
-        record.phonecontract,
-        record.equipment,
-        record.problem,
-        record.image,
-        record.status || 'Repair request',
-        record.warranty,
-        record.reportDate,
-        record.engineer,
-        record.serialNumber,
-        record.ibDate || '',
-        record.expiryDate || ''
-      ]
-    ];
-    
-    const range = encodeURIComponent("'DATABASE TARGET USER'!A1");
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ values })
-    });
-    
-    if (!res.ok) {
-      if (res.status === 400 || res.status === 404) {
-          console.warn("Target tab might not exist. Attempting to create it.");
-      }
-      throw new Error(`Failed to append CMOnCall record. Code: ${res.status}`);
+  const values = [
+    [
+      record.hospital,
+      record.namecontract,
+      record.phonecontract,
+      record.equipment,
+      record.problem,
+      record.image,
+      record.status || 'Repair request',
+      record.warranty,
+      record.reportDate,
+      record.engineer,
+      record.serialNumber,
+      record.ibDate || '',
+      record.expiryDate || ''
+    ]
+  ];
+
+  let res = await sheetsAppendValues(spreadsheetId, "'DATABASE TARGET USER'!A1", values, accessToken);
+  if (!res.ok && (res.status === 400 || res.status === 404)) {
+    const createSheetRes = await sheetsAddSheet(spreadsheetId, 'DATABASE TARGET USER', accessToken);
+    if (createSheetRes.ok) {
+      await sheetsUpdateValues(
+        spreadsheetId,
+        "'DATABASE TARGET USER'!A1:M1",
+        [["Hospital", "Contact Name", "Contact Phone", "Equipment", "Problem", "Image URL", "Status", "Warranty", "Report Date", "Engineer", "Serial Number", "IB Date", "Expiry Date"]],
+        accessToken
+      );
+      res = await sheetsAppendValues(spreadsheetId, "'DATABASE TARGET USER'!A1", values, accessToken);
     }
-  } catch (error) {
-    console.error("appendCMOnCallRecord error:", error);
-    throw error;
+  }
+  if (!res.ok) {
+    throw new Error(`Failed to append CMOnCall record. ${res.error || `Code: ${res.status}`}`);
   }
 };
 
@@ -1070,58 +1073,38 @@ export const updateCMOnCallRecord = async (
   rowIndex: number,
   record: import("./types").CMStatusRecord
 ): Promise<void> => {
-  try {
-    const values = [
-      [
-        record.hospital,
-        record.namecontract,
-        record.phonecontract,
-        record.equipment,
-        record.problem,
-        record.image,
-        record.status,
-        record.warranty,
-        record.reportDate,
-        record.engineer,
-        record.serialNumber,
-        record.ibDate || '',
-        record.expiryDate || ''
-      ]
-    ];
-    const range = encodeURIComponent(`'DATABASE TARGET USER'!A${rowIndex}:M${rowIndex}`);
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ values }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Failed to update CMOnCall record. Code: ${res.status}`);
-    }
-  } catch (error) {
-    console.error("updateCMOnCallRecord error:", error);
-    throw error;
+  const values = [
+    [
+      record.hospital,
+      record.namecontract,
+      record.phonecontract,
+      record.equipment,
+      record.problem,
+      record.image,
+      record.status,
+      record.warranty,
+      record.reportDate,
+      record.engineer,
+      record.serialNumber,
+      record.ibDate || '',
+      record.expiryDate || ''
+    ]
+  ];
+  const res = await sheetsUpdateValues(spreadsheetId, `'DATABASE TARGET USER'!A${rowIndex}:M${rowIndex}`, values, accessToken);
+  if (!res.ok) {
+    throw new Error(`Failed to update CMOnCall record. ${res.error || `Code: ${res.status}`}`);
   }
 };
 
-
 export const fetchSpreadsheetTabs = async (spreadsheetId: string, accessToken: string): Promise<string[]> => {
   try {
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    if (!res.ok) throw new Error(`Failed to fetch spreadsheet metadata. Code: ${res.status}`);
-    const data = await res.json();
-    return data.sheets.map((s: any) => s.properties.title);
+    const data = await sheetsGetMeta(spreadsheetId, accessToken);
+    return (data.sheets || []).map((s: any) => s.properties.title);
   } catch (error) {
     console.error("fetchSpreadsheetTabs error:", error);
     return [];
   }
 };
-
 
 /**
  * Appends a quotation to the "Quotations" sheet.
@@ -1132,52 +1115,22 @@ export const appendQuotation = async (
   accessToken: string
 ): Promise<void> => {
   const sheetName = 'Quotations';
-  
-  // First, check if the "Quotations" sheet exists
-  const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
-  
-  if (metaRes.ok) {
-    const metaData = await metaRes.json();
-    const existingSheetTitles = metaData.sheets.map((s: any) => s.properties.title);
-    
-    // If not, create it with headers
+  try {
+    const metaData = await sheetsGetMeta(spreadsheetId, accessToken);
+    const existingSheetTitles = (metaData.sheets || []).map((s: any) => s.properties.title);
     if (!existingSheetTitles.includes(sheetName)) {
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          requests: [
-            {
-              addSheet: {
-                properties: {
-                  title: sheetName
-                }
-              }
-            }
-          ]
-        })
-      });
-
-      // Add headers
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:J1?valueInputOption=USER_ENTERED`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          values: [["ชื่อไฟล์", "วันที่", "เลขที่", "ชื่องาน", "รายละเอียด", "จำนวนเงินรวมทั้งสิ้น", "ประเภทงาน", "โอกาสได้งาน (%)", "ID", "ชื่อลูกค้า"]]
-        })
-      });
+      await sheetsAddSheet(spreadsheetId, sheetName, accessToken);
+      await sheetsUpdateValues(
+        spreadsheetId,
+        `${sheetName}!A1:J1`,
+        [["ชื่อไฟล์", "วันที่", "เลขที่", "ชื่องาน", "รายละเอียด", "จำนวนเงินรวมทั้งสิ้น", "ประเภทงาน", "โอกาสได้งาน (%)", "ID", "ชื่อลูกค้า"]],
+        accessToken
+      );
     }
+  } catch (err) {
+    console.warn("appendQuotation metadata check warning:", err);
   }
 
-  // Append data
   const rowValues = [
     data.fileName || '',
     data.date || '',
@@ -1191,22 +1144,11 @@ export const appendQuotation = async (
     data.customerName || ''
   ];
 
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      values: [rowValues]
-    })
-  });
-
+  const res = await sheetsAppendValues(spreadsheetId, `${sheetName}!A1`, [rowValues], accessToken);
   if (!res.ok) {
-    throw new Error('Failed to save quotation to Google Sheets');
+    throw new Error(res.error || 'Failed to save quotation to Google Sheets');
   }
 };
-
 
 export interface QuotationRecord {
   fileName: string;
@@ -1227,32 +1169,26 @@ export const fetchQuotations = async (
   accessToken: string
 ): Promise<QuotationRecord[]> => {
   const sheetName = 'Quotations';
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A2:J1000`;
-  
-  const res = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
+  const res = await sheetsGetValues(spreadsheetId, `${sheetName}!A2:J1000`, accessToken);
 
   if (!res.ok) {
-    if (res.status === 400) return []; // Sheet might not exist yet
-    throw new Error('Failed to fetch quotations');
+    if (res.status === 400 || res.status === 404) return [];
+    throw new Error(res.error || 'Failed to fetch quotations');
   }
 
-  const data = await res.json();
-  const rows = data.values || [];
-  
+  const rows = res.values || [];
   return rows.map((row: any[], index: number) => ({
-    fileName: row[0] || '',
-    date: row[1] || '',
-    quotationNumber: row[2] || '',
-    jobName: row[3] || '',
-    description: row[4] || '',
-    totalAmount: row[5] ? parseFloat(row[5].replace(/[^0-9.-]+/g,"")) || 0 : 0,
-    jobType: row[6] || 'PM',
-    winRate: row[7] ? parseInt(row[7]) || 0 : 0,
-    id: row[8] || '',
-    customerName: row[9] || '',
-    rowIndex: index + 2 // A2 is row 2
+    fileName: row[0] ? String(row[0]) : '',
+    date: row[1] ? String(row[1]) : '',
+    quotationNumber: row[2] ? String(row[2]) : '',
+    jobName: row[3] ? String(row[3]) : '',
+    description: row[4] ? String(row[4]) : '',
+    totalAmount: row[5] !== undefined && row[5] !== '' ? parseFloat(String(row[5]).replace(/[^0-9.-]+/g, "")) || 0 : 0,
+    jobType: row[6] ? String(row[6]) : 'PM',
+    winRate: row[7] !== undefined && row[7] !== '' ? parseInt(String(row[7]), 10) || 0 : 0,
+    id: row[8] ? String(row[8]) : '',
+    customerName: row[9] ? String(row[9]) : '',
+    rowIndex: index + 2
   }));
 };
 
@@ -1265,20 +1201,10 @@ export const updateQuotationWinRate = async (
 ): Promise<void> => {
   const sheetName = 'Quotations';
   const range = `${sheetName}!G${rowIndex}:H${rowIndex}`;
-  
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      values: [[jobType, winRate]]
-    })
-  });
+  const res = await sheetsUpdateValues(spreadsheetId, range, [[jobType, winRate]], accessToken);
 
   if (!res.ok) {
-    throw new Error('Failed to update quotation data');
+    throw new Error(res.error || 'Failed to update quotation data');
   }
 };
 
@@ -1286,19 +1212,14 @@ export const updateQuotationWinRate = async (
 export const fetchDispatchRecords = async (spreadsheetId: string, accessToken: string): Promise<import('./types').DispatchRecord[]> => {
   const sheetName = 'DispatchSchedule';
   try {
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A2:G`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    
+    const res = await sheetsGetValues(spreadsheetId, `${sheetName}!A2:G`, accessToken);
     if (!res.ok) {
       console.warn('Could not fetch Dispatch records, status:', res.status);
       return [];
     }
-    
-    const data = await res.json();
-    if (!data.values) return [];
-    
-    return data.values.map((row: any[], index: number) => ({
+    if (!res.values) return [];
+
+    return res.values.map((row: any[], index: number) => ({
       id: row[0] || '',
       date: row[1] || '',
       engineer: row[2] || '',
@@ -1316,50 +1237,37 @@ export const fetchDispatchRecords = async (spreadsheetId: string, accessToken: s
 
 export const appendDispatchRecord = async (spreadsheetId: string, accessToken: string, record: import('./types').DispatchRecord): Promise<void> => {
   const sheetName = 'DispatchSchedule';
-  
-  // Ensure tab exists
-  const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
-  if (metaRes.ok) {
-    const metaData = await metaRes.json();
-    const existingSheetTitles = metaData.sheets.map((s: any) => s.properties.title);
+  try {
+    const metaData = await sheetsGetMeta(spreadsheetId, accessToken);
+    const existingSheetTitles = (metaData.sheets || []).map((s: any) => s.properties.title);
     if (!existingSheetTitles.includes(sheetName)) {
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requests: [{ addSheet: { properties: { title: sheetName } } }]
-        })
-      });
-      // Headers
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:G1?valueInputOption=USER_ENTERED`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: [['ID', 'Date', 'Engineer', 'Task', 'Location', 'Remark', 'Status']] })
-      });
+      await sheetsAddSheet(spreadsheetId, sheetName, accessToken);
+      await sheetsUpdateValues(
+        spreadsheetId,
+        `${sheetName}!A1:G1`,
+        [['ID', 'Date', 'Engineer', 'Task', 'Location', 'Remark', 'Status']],
+        accessToken
+      );
     }
+  } catch (err) {
+    console.warn("appendDispatchRecord meta warning:", err);
   }
 
   const values = [[record.id, record.date, record.engineer, record.taskTitle, record.location, record.remark, record.status]];
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values })
-  });
+  const res = await sheetsAppendValues(spreadsheetId, `${sheetName}!A1`, values, accessToken);
+  if (!res.ok) {
+    throw new Error(res.error || 'Failed to save dispatch record');
+  }
 };
-
 
 export const deleteDispatchRecord = async (spreadsheetId: string, accessToken: string, rowIndex: number): Promise<void> => {
   const sheetName = 'DispatchSchedule';
   const range = `${sheetName}!A${rowIndex}:G${rowIndex}`;
   const values = [['', '', '', '', '', '', '']];
-  
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
-    method: 'PUT',
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values })
-  });
+  const res = await sheetsUpdateValues(spreadsheetId, range, values, accessToken);
+  if (!res.ok) {
+    throw new Error(res.error || 'Failed to delete dispatch record');
+  }
 };
 
 export const updateDispatchRecord = async (spreadsheetId: string, accessToken: string, record: import('./types').DispatchRecord): Promise<void> => {
@@ -1367,14 +1275,11 @@ export const updateDispatchRecord = async (spreadsheetId: string, accessToken: s
   const sheetName = 'DispatchSchedule';
   const range = `${sheetName}!A${record.rowIndex}:G${record.rowIndex}`;
   const values = [[record.id, record.date, record.engineer, record.taskTitle, record.location, record.remark, record.status]];
-  
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
-    method: 'PUT',
-    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values })
-  });
+  const res = await sheetsUpdateValues(spreadsheetId, range, values, accessToken);
+  if (!res.ok) {
+    throw new Error(res.error || 'Failed to update dispatch record');
+  }
 };
-
 
 // ==========================================
 // PM ASSIGNMENTS
@@ -1382,61 +1287,28 @@ export const updateDispatchRecord = async (spreadsheetId: string, accessToken: s
 
 export const fetchPMAssignmentsFromSheet = async (spreadsheetId: string, accessToken: string): Promise<Record<string, string>> => {
   const sheetName = 'PM_Assignments';
-  
-  // 1. Check if sheet exists
-  const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
-  const metaData = await metaRes.json();
-  
-  if (metaData.error) {
-    throw new Error(metaData.error.message);
-  }
-  
-  const hasSheet = metaData.sheets.some((s: any) => s.properties.title === sheetName);
-  
-  // If not exists, create it
+  const metaData = await sheetsGetMeta(spreadsheetId, accessToken);
+  const hasSheet = (metaData.sheets || []).some((s: any) => s.properties.title === sheetName);
+
   if (!hasSheet) {
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        requests: [{
-          addSheet: { properties: { title: sheetName } }
-        }]
-      })
-    });
-    
-    // Add headers
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:C1?valueInputOption=USER_ENTERED`, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        values: [["RecordKey", "EngineerName", "UpdatedAt"]]
-      })
-    });
-    
+    await sheetsAddSheet(spreadsheetId, sheetName, accessToken);
+    await sheetsUpdateValues(
+      spreadsheetId,
+      `${sheetName}!A1:C1`,
+      [["RecordKey", "EngineerName", "UpdatedAt"]],
+      accessToken
+    );
     return {};
   }
-  
-  // 2. Fetch data
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A2:C`, {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
-  
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  
-  const rows = data.values || [];
+
+  const res = await sheetsGetValues(spreadsheetId, `${sheetName}!A2:C`, accessToken);
+  if (!res.ok) {
+    throw new Error(res.error || `Failed to load ${sheetName}`);
+  }
+
+  const rows = res.values || [];
   const assignments: Record<string, string> = {};
-  
-  // Process rows: latest row for a recordKey takes precedence if duplicates exist
+
   rows.forEach((row: any[]) => {
     const key = row[0];
     const engineer = row[1];
@@ -1448,29 +1320,15 @@ export const fetchPMAssignmentsFromSheet = async (spreadsheetId: string, accessT
       }
     }
   });
-  
+
   return assignments;
 };
 
 export const updatePMAssignmentsInSheet = async (spreadsheetId: string, accessToken: string, recordKey: string, engineerName: string): Promise<void> => {
   const sheetName = 'PM_Assignments';
-  
-  // Ensure sheet exists before appending (optimistically assume it exists most of the time, 
-  // if fetchPMAssignmentsFromSheet was called earlier, it exists)
-  
   const timestamp = new Date().toISOString();
-  
-  // We simply append a new row. The fetch function processes them in order, so the latest prevails.
-  // Alternatively, we could find and update, but append is much faster and simpler.
-  
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      values: [[recordKey, engineerName, timestamp]]
-    })
-  });
+  const res = await sheetsAppendValues(spreadsheetId, `${sheetName}!A1`, [[recordKey, engineerName, timestamp]], accessToken);
+  if (!res.ok) {
+    throw new Error(res.error || 'Failed to update PM assignment');
+  }
 };

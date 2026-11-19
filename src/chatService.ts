@@ -1,4 +1,10 @@
+import { isBridgeToken } from './googleBridgeClient';
+
 export const sendChatMessage = async (accessToken: string, email: string, message: string) => {
+  if (isBridgeToken(accessToken)) {
+    // Google Chat direct DM requires personal user OAuth; skip cleanly in No-Login Bridge Mode
+    return;
+  }
   try {
     // 1. Setup a space with the user
     const setupRes = await fetch('https://chat.googleapis.com/v1/spaces:setup', {

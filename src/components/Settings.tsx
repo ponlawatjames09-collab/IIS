@@ -1,19 +1,56 @@
-import React, { useState } from 'react';
-import { Database, Activity, Plus, Trash2, CheckCircle2, MessageSquare, AlertCircle, Save, FolderOpen, RefreshCw , User } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Database, Activity, Plus, Trash2, CheckCircle2, MessageSquare, AlertCircle, Save, FolderOpen, RefreshCw, User, Link2, Copy, Check, KeyRound, Code2, LogIn, LogOut } from 'lucide-react';
 import { SystemSettings } from '../types';
 import { createSpreadsheet, testSheetsConnection } from '../sheetsService';
 import { createDriveFolder } from '../driveService';
+import { GOOGLE_APPS_SCRIPT_CODE } from '../gasBridgeTemplate';
+import { BRIDGE_TOKEN_SENTINEL, pingGoogleBridge, setGoogleBridgeConfig } from '../googleBridgeClient';
+
+export interface BridgeStatusInfo {
+  configured: boolean;
+  mode: 'gas' | 'service_account' | 'none';
+  gasWebAppUrl?: string;
+  hasServiceAccount?: boolean;
+  serviceAccountEmail?: string | null;
+}
 
 interface SettingsProps {
   settings: SystemSettings;
   onUpdateSettings: (settings: SystemSettings) => void;
-  accessToken: string;
+  accessToken: string | null;
+  bridgeStatus?: BridgeStatusInfo;
+  onBridgeStatusChange?: (status: BridgeStatusInfo) => void;
+  isOAuthSignedIn?: boolean;
+  onGoogleSignIn?: () => Promise<void>;
+  onGoogleSignOut?: () => Promise<void>;
 }
 
-export default function Settings({ settings, onUpdateSettings, accessToken }: SettingsProps) {
+export default function Settings({
+  settings,
+  onUpdateSettings,
+  accessToken,
+  bridgeStatus,
+  onBridgeStatusChange,
+  isOAuthSignedIn,
+  onGoogleSignIn,
+  onGoogleSignOut
+}: SettingsProps) {
+  const effectiveToken = accessToken || BRIDGE_TOKEN_SENTINEL;
+
   const [spreadsheetInput, setSpreadsheetInput] = useState(settings.spreadsheetId || '');
   const [pmSpreadsheetInput, setPmSpreadsheetInput] = useState(settings.pmSpreadsheetId || '');
   const [cmOnCallSpreadsheetInput, setCmOnCallSpreadsheetInput] = useState(settings.cmOnCallSpreadsheetId || '19c9vJhO4qMdCP1O7rwWP_aUZyTqQrTwnzWWxtH7zDdE');
+
+  // No-Login Bridge states
+  const [bridgeTab, setBridgeTab] = useState<'gas' | 'service_account'>('gas');
+  const [gasUrlInput, setGasUrlInput] = useState(settings.gasWebAppUrl || bridgeStatus?.gasWebAppUrl || '');
+  const [serviceAccountInput, setServiceAccountInput] = useState('');
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedSaEmail, setCopiedSaEmail] = useState(false);
+  const [showCodePreview, setShowCodePreview] = useState(false);
+  const [isSavingBridge, setIsSavingBridge] = useState(false);
+  const [isTestingBridge, setIsTestingBridge] = useState(false);
+
   const [isCreatingSpreadsheet, setIsCreatingSpreadsheet] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -31,39 +68,197 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
   const [lineNotifyToken, setLineNotifyToken] = useState(settings.lineConfig.notifyToken);
   const [lineIsEnabled, setLineIsEnabled] = useState(settings.lineConfig.isEnabled);
 
-  const saveSpreadsheetId = () => {
+  useEffect(() => {
+    setSpreadsheetInput(settings.spreadsheetId || '');
+  }, [settings.spreadsheetId]);
+
+  useEffect(() => {
+    setPmSpreadsheetInput(settings.pmSpreadsheetId || '');
+  }, [settings.pmSpreadsheetId]);
+
+  useEffect(() => {
+    if (settings.cmOnCallSpreadsheetId) {
+      setCmOnCallSpreadsheetInput(settings.cmOnCallSpreadsheetId);
+    }
+  }, [settings.cmOnCallSpreadsheetId]);
+
+  useEffect(() => {
+    const url = settings.gasWebAppUrl || bridgeStatus?.gasWebAppUrl || '';
+    if (url) setGasUrlInput(url);
+  }, [settings.gasWebAppUrl, bridgeStatus?.gasWebAppUrl]);
+
+  const syncServerBridgeConfig = async (payload: Record<string, any>) => {
+    const res = await fetch('/api/bridge/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to save server bridge configuration');
+    }
+    setGoogleBridgeConfig({
+      gasWebAppUrl: data.gasWebAppUrl || null,
+      serverConfigured: Boolean(data.configured),
+      preferBridge: true
+    });
+    if (onBridgeStatusChange) {
+      onBridgeStatusChange({
+        configured: Boolean(data.configured),
+        mode: data.mode || 'none',
+        gasWebAppUrl: data.gasWebAppUrl || '',
+        hasServiceAccount: Boolean(data.hasServiceAccount),
+        serviceAccountEmail: data.serviceAccountEmail || null
+      });
+    }
+    return data;
+  };
+
+  const handleCopyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2500);
+    } catch {
+      setShowCodePreview(true);
+    }
+  };
+
+  const handleSaveGasUrl = async () => {
+    setSpreadsheetError(null);
+    setSpreadsheetSuccess(null);
+    const trimmed = gasUrlInput.trim();
+    if (trimmed && !trimmed.startsWith('https://script.google.com/')) {
+      setSpreadsheetError('Web App URL ควรขึ้นต้นด้วย https://script.google.com/macros/s/.../exec');
+      return;
+    }
+
+    setIsSavingBridge(true);
+    try {
+      const serverData = await syncServerBridgeConfig({
+        gasWebAppUrl: trimmed,
+        spreadsheetId: spreadsheetInput.trim(),
+        pmSpreadsheetId: pmSpreadsheetInput.trim(),
+        cmOnCallSpreadsheetId: cmOnCallSpreadsheetInput.trim()
+      });
+      onUpdateSettings({
+        ...settings,
+        gasWebAppUrl: trimmed || null
+      });
+      if (trimmed) {
+        await pingGoogleBridge(trimmed);
+        setSpreadsheetSuccess('เชื่อมต่อ Google Apps Script Bridge สำเร็จ! ทุกเครื่องสามารถใช้งานได้ทันทีโดยไม่ต้อง Login Google');
+      } else {
+        setSpreadsheetSuccess(
+          serverData.hasServiceAccount
+            ? 'ล้าง Apps Script URL แล้ว (ระบบสลับไปใช้ Service Account อัตโนมัติ)'
+            : 'ล้าง Apps Script URL เรียบร้อยแล้ว'
+        );
+      }
+    } catch (err: any) {
+      setSpreadsheetError(`บันทึกหรือทดสอบ Bridge ไม่สำเร็จ: ${err.message || err}`);
+    } finally {
+      setIsSavingBridge(false);
+    }
+  };
+
+  const handleTestBridge = async () => {
+    setSpreadsheetError(null);
+    setSpreadsheetSuccess(null);
+    setIsTestingBridge(true);
+    try {
+      const targetUrl = gasUrlInput.trim() || undefined;
+      const result = await pingGoogleBridge(targetUrl);
+      setSpreadsheetSuccess(`Bridge ทำงานปกติ: ${result?.message || 'Connected'}`);
+    } catch (err: any) {
+      setSpreadsheetError(`ทดสอบ Bridge ไม่สำเร็จ: ${err.message || err}`);
+    } finally {
+      setIsTestingBridge(false);
+    }
+  };
+
+  const handleSaveServiceAccount = async () => {
+    setSpreadsheetError(null);
+    setSpreadsheetSuccess(null);
+    if (!serviceAccountInput.trim()) {
+      setSpreadsheetError('กรุณาวาง JSON Key ของ Google Service Account');
+      return;
+    }
+    setIsSavingBridge(true);
+    try {
+      const data = await syncServerBridgeConfig({
+        serviceAccountJson: serviceAccountInput.trim(),
+        spreadsheetId: spreadsheetInput.trim(),
+        pmSpreadsheetId: pmSpreadsheetInput.trim(),
+        cmOnCallSpreadsheetId: cmOnCallSpreadsheetInput.trim()
+      });
+      setServiceAccountInput('');
+      setSpreadsheetSuccess(`บันทึก Service Account (${data.serviceAccountEmail}) สำเร็จ! อย่าลืมแชร์ Google Sheets ให้ Email นี้เป็น Editor`);
+    } catch (err: any) {
+      setSpreadsheetError(`บันทึก Service Account ไม่สำเร็จ: ${err.message || err}`);
+    } finally {
+      setIsSavingBridge(false);
+    }
+  };
+
+  const handleClearServiceAccount = async () => {
+    setSpreadsheetError(null);
+    setSpreadsheetSuccess(null);
+    setIsSavingBridge(true);
+    try {
+      await syncServerBridgeConfig({ clearServiceAccount: true });
+      setSpreadsheetSuccess('ลบ Service Account ออกจากเซิร์ฟเวอร์เรียบร้อยแล้ว');
+    } catch (err: any) {
+      setSpreadsheetError(`ลบ Service Account ไม่สำเร็จ: ${err.message || err}`);
+    } finally {
+      setIsSavingBridge(false);
+    }
+  };
+
+  const saveSpreadsheetId = async () => {
     setSpreadsheetError(null);
     setSpreadsheetSuccess(null);
     if (!spreadsheetInput.trim()) {
       setSpreadsheetError("Please enter a valid Google Spreadsheet ID.");
       return;
     }
+    const cleanId = spreadsheetInput.trim();
     onUpdateSettings({
       ...settings,
-      spreadsheetId: spreadsheetInput.trim()
+      spreadsheetId: cleanId
     });
-    setSpreadsheetSuccess("Google Spreadsheet ID saved successfully!");
+    try {
+      await syncServerBridgeConfig({ spreadsheetId: cleanId });
+    } catch {}
+    setSpreadsheetSuccess("Google Spreadsheet ID saved and synced across devices!");
   };
 
-  
-  const savePmSpreadsheetId = () => {
+  const savePmSpreadsheetId = async () => {
     setSpreadsheetError(null);
     setSpreadsheetSuccess(null);
+    const cleanId = pmSpreadsheetInput.trim();
     onUpdateSettings({
       ...settings,
-      pmSpreadsheetId: pmSpreadsheetInput.trim()
+      pmSpreadsheetId: cleanId
     });
-    setSpreadsheetSuccess("PM Spreadsheet ID saved successfully!");
+    try {
+      await syncServerBridgeConfig({ pmSpreadsheetId: cleanId });
+    } catch {}
+    setSpreadsheetSuccess("PM Spreadsheet ID saved and synced!");
   };
 
-  const saveCmOnCallSpreadsheetId = () => {
+  const saveCmOnCallSpreadsheetId = async () => {
     setSpreadsheetError(null);
     setSpreadsheetSuccess(null);
+    const cleanId = cmOnCallSpreadsheetInput.trim();
     onUpdateSettings({
       ...settings,
-      cmOnCallSpreadsheetId: cmOnCallSpreadsheetInput.trim()
+      cmOnCallSpreadsheetId: cleanId
     });
-    setSpreadsheetSuccess("CM On Call Spreadsheet ID saved successfully!");
+    try {
+      await syncServerBridgeConfig({ cmOnCallSpreadsheetId: cleanId });
+    } catch {}
+    setSpreadsheetSuccess("CM On Call Spreadsheet ID saved and synced!");
   };
 
   const handleAutoCreateSpreadsheet = async () => {
@@ -71,13 +266,16 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
     setSpreadsheetError(null);
     setSpreadsheetSuccess(null);
     try {
-      const newId = await createSpreadsheet(accessToken);
+      const newId = await createSpreadsheet(effectiveToken);
       setSpreadsheetInput(newId);
       onUpdateSettings({
         ...settings,
         spreadsheetId: newId
       });
-      setSpreadsheetSuccess("Brand new Service Job Hub - 2026 Spreadsheet successfully created in your Google Drive with all 12 monthly sheets! Double check your drive to verify.");
+      try {
+        await syncServerBridgeConfig({ spreadsheetId: newId });
+      } catch {}
+      setSpreadsheetSuccess("Brand new Service Job Hub - 2026 Spreadsheet successfully created in Google Drive with all 12 monthly sheets!");
     } catch (err: any) {
       setSpreadsheetError(`Failed to create spreadsheet: ${err.message || err}`);
     } finally {
@@ -90,17 +288,13 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
       setSpreadsheetError("No Spreadsheet ID configured. Please set one first.");
       return;
     }
-    if (!accessToken) {
-      setSpreadsheetError("No access token available. Please sign in again.");
-      return;
-    }
-    
+
     setIsTestingConnection(true);
     setSpreadsheetError(null);
     setSpreadsheetSuccess(null);
-    
+
     try {
-      const headerRow = await testSheetsConnection(settings.spreadsheetId, accessToken);
+      const headerRow = await testSheetsConnection(settings.spreadsheetId, effectiveToken);
       const headerStr = headerRow.length > 0 ? headerRow.join(', ') : 'Empty Header';
       setSpreadsheetSuccess(`Connection successful! Header row: [${headerStr}]`);
     } catch (err: any) {
@@ -110,23 +304,18 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
     }
   };
 
-  
   const handleTestPmConnection = async () => {
     if (!settings.pmSpreadsheetId) {
       setSpreadsheetError("No PM Spreadsheet ID configured.");
       return;
     }
-    if (!accessToken) {
-      setSpreadsheetError("No access token available. Please sign in again.");
-      return;
-    }
-    
+
     setIsTestingConnection(true);
     setSpreadsheetError(null);
     setSpreadsheetSuccess(null);
-    
+
     try {
-      const headerRow = await testSheetsConnection(settings.pmSpreadsheetId, accessToken);
+      const headerRow = await testSheetsConnection(settings.pmSpreadsheetId, effectiveToken);
       const headerStr = headerRow.length > 0 ? headerRow.join(', ') : 'Empty Header';
       setSpreadsheetSuccess(`PM Connection successful! Header row: [${headerStr}]`);
     } catch (err: any) {
@@ -141,8 +330,15 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
     setSpreadsheetError(null);
     setSpreadsheetSuccess(null);
     try {
-      const folderId = await createDriveFolder(accessToken, "Service Job Sheets PDF");
+      const folderId = await createDriveFolder(effectiveToken, "Service Job Sheets PDF");
       localStorage.setItem('drive_pdf_folder_id', folderId);
+      onUpdateSettings({
+        ...settings,
+        drivePdfFolderId: folderId
+      });
+      try {
+        await syncServerBridgeConfig({ drivePdfFolderId: folderId });
+      } catch {}
       setSpreadsheetSuccess(`Successfully created Google Drive folder 'Service Job Sheets PDF' (ID: ${folderId}) to store all client job PDFs!`);
     } catch (err: any) {
       setSpreadsheetError(`Failed to create Drive folder: ${err.message || err}`);
@@ -208,13 +404,36 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
     });
   };
 
+  const isBridgeActive = Boolean(bridgeStatus?.configured || settings.gasWebAppUrl);
+
   return (
     <div className="w-full space-y-4 font-sans" id="settings-view">
       {/* Page Title */}
-      <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 select-none">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5 select-none">
         <div>
           <h1 className="text-base font-bold text-slate-800 tracking-tight">System Connections</h1>
-          <p className="text-slate-500 text-xs mt-0.5">Configure your Workspace Spreadsheet connection, PDF document folders, Line alerts, and dropdown data arrays.</p>
+          <p className="text-slate-500 text-xs mt-0.5">เชื่อมต่อ Google Sheets & Drive แบบ Real-time โดยไม่ต้อง Login Google (Apps Script Bridge / Service Account)</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {bridgeStatus?.mode === 'gas' || settings.gasWebAppUrl ? (
+            <span className="px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded text-[11px] font-bold flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              Apps Script Bridge Active (No Login)
+            </span>
+          ) : bridgeStatus?.mode === 'service_account' ? (
+            <span className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded text-[11px] font-bold flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+              Service Account Active (No Login)
+            </span>
+          ) : isOAuthSignedIn ? (
+            <span className="px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded text-[11px] font-bold">
+              Google OAuth Session
+            </span>
+          ) : (
+            <span className="px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-700 rounded text-[11px] font-bold">
+              รอตั้งค่า Bridge Connection
+            </span>
+          )}
         </div>
       </div>
 
@@ -226,7 +445,7 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
               <AlertCircle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
               <div>
                 <span className="font-bold text-xs">System Alert</span>
-                <p className="text-[11px] text-red-700 mt-0.5">{spreadsheetError}</p>
+                <p className="text-[11px] text-red-700 mt-0.5 whitespace-pre-wrap">{spreadsheetError}</p>
               </div>
             </div>
           )}
@@ -246,6 +465,194 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
         
         {/* Left column: Connections */}
         <div className="lg:col-span-2 space-y-4">
+
+          {/* Card 0: No-Login Google Bridge Setup */}
+          <div className="bg-white rounded border border-slate-200 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-emerald-50 text-emerald-600 rounded">
+                  <Link2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-bold text-xs text-slate-800 uppercase tracking-wider">No-Login Google Sheets Bridge (แนวทางที่ 1)</h2>
+                  <p className="text-[11px] text-slate-500 mt-0.5">เชื่อมต่อไฟล์ Google Sheets เดิมแบบ Real-time จากทุกเครื่องโดยตัดหน้า Google Login ออกทั้งหมด</p>
+                </div>
+              </div>
+
+              <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200 text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setBridgeTab('gas')}
+                  className={`px-2.5 py-1 rounded cursor-pointer transition-all ${bridgeTab === 'gas' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Apps Script Bridge (แนะนำ)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBridgeTab('service_account')}
+                  className={`px-2.5 py-1 rounded cursor-pointer transition-all ${bridgeTab === 'service_account' ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Service Account
+                </button>
+              </div>
+            </div>
+
+            {bridgeTab === 'gas' ? (
+              <div className="space-y-3">
+                <div className="bg-slate-50 border border-slate-200 rounded p-3 text-xs text-slate-700 space-y-1.5">
+                  <div className="font-bold text-slate-800 flex items-center justify-between">
+                    <span>ขั้นตอนตั้งค่าครั้งเดียว (ใช้งานได้ทุกเครื่องตลอดไป):</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setShowCodePreview(!showCodePreview)}
+                        className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-300 rounded flex items-center gap-1 cursor-pointer"
+                      >
+                        <Code2 className="w-3.5 h-3.5" />
+                        <span>{showCodePreview ? 'ซ่อนโค้ด' : 'ดูโค้ด'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCopyCode}
+                        className="px-2.5 py-1 text-[11px] font-bold text-white bg-slate-900 hover:bg-slate-800 rounded flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedCode ? 'คัดลอก Code.gs แล้ว!' : 'คัดลอก Code.gs'}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-600 leading-relaxed">
+                    <li>เปิดไฟล์ Google Sheet ของคุณ แล้วกดเมนู <strong>Extensions (ส่วนขยาย) &gt; Apps Script</strong> หรือไปที่ <code className="bg-white px-1 py-0.5 rounded border border-slate-200">script.google.com</code></li>
+                    <li>ลบโค้ดเดิมออกทั้งหมด แล้วกด <strong>คัดลอก Code.gs</strong> ด้านบนไปวางแทนที่ จากนั้นกด Save (Ctrl+S)</li>
+                    <li>กด <strong>Deploy &gt; New deployment &gt; Select type: Web app</strong> ตั้งค่า <strong>Execute as: Me</strong> และ <strong>Who has access: Anyone</strong> แล้วกด Deploy และอนุญาตสิทธิ์ Google ครั้งแรก</li>
+                    <li>คัดลอก <strong>Web app URL</strong> (<code className="bg-white px-1 py-0.5 rounded border border-slate-200">https://script.google.com/macros/s/.../exec</code>) มาวางในช่องด้านล่างแล้วกดบันทึก</li>
+                  </ol>
+                </div>
+
+                {showCodePreview && (
+                  <pre className="bg-slate-950 text-emerald-300 text-[10px] font-mono p-3 rounded max-h-56 overflow-auto border border-slate-800">
+                    {GOOGLE_APPS_SCRIPT_CODE}
+                  </pre>
+                )}
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Google Apps Script Web App URL</label>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="url"
+                      value={gasUrlInput}
+                      onChange={(e) => setGasUrlInput(e.target.value)}
+                      placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                      className="flex-1 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded text-slate-800 placeholder-slate-400 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveGasUrl}
+                      disabled={isSavingBridge}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 md:py-1.5 rounded font-bold text-xs shadow-sm transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      {isSavingBridge ? 'กำลังบันทึก...' : 'Save & Test Bridge'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTestBridge}
+                      disabled={isTestingBridge || (!gasUrlInput.trim() && !isBridgeActive)}
+                      className="border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-3 py-2 md:py-1.5 rounded font-bold text-xs cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      {isTestingBridge ? 'Testing...' : 'Ping Bridge'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {bridgeStatus?.hasServiceAccount && bridgeStatus.serviceAccountEmail && (
+                  <div className="bg-indigo-50 border border-indigo-200 rounded p-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs">
+                      <div className="font-bold text-indigo-900 flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>Service Account พร้อมใช้งาน:</span>
+                      </div>
+                      <p className="font-mono text-[11px] text-indigo-700 mt-0.5 break-all">{bridgeStatus.serviceAccountEmail}</p>
+                      <p className="text-[10px] text-indigo-600 mt-1">* อย่าลืมกด Share (สิทธิ์ Editor) บน Google Sheet และ Drive Folder ให้กับ Email นี้</p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(bridgeStatus.serviceAccountEmail || '');
+                          setCopiedSaEmail(true);
+                          setTimeout(() => setCopiedSaEmail(false), 2000);
+                        }}
+                        className="px-2.5 py-1 bg-white border border-indigo-300 text-indigo-700 rounded text-[11px] font-bold cursor-pointer"
+                      >
+                        {copiedSaEmail ? 'Copied!' : 'Copy Email'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearServiceAccount}
+                        disabled={isSavingBridge}
+                        className="px-2.5 py-1 bg-rose-50 border border-rose-200 text-rose-700 rounded text-[11px] font-bold cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                    วาง Service Account Credentials JSON (จาก Google Cloud IAM)
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={serviceAccountInput}
+                    onChange={(e) => setServiceAccountInput(e.target.value)}
+                    placeholder='{"type": "service_account", "project_id": "...", "client_email": "...@....iam.gserviceaccount.com", "private_key": "-----BEGIN PRIVATE KEY-----..."}'
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded text-slate-800 placeholder-slate-400 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white"
+                  />
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveServiceAccount}
+                      disabled={isSavingBridge}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded font-bold text-xs cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingBridge ? 'กำลังบันทึก...' : 'Save Service Account JSON'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Optional Legacy OAuth row */}
+            {(onGoogleSignIn || onGoogleSignOut) && (
+              <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <span className="text-slate-500">
+                  ตัวเลือกเสริม: {isOAuthSignedIn ? 'เชื่อมต่อ Google Account ส่วนตัวอยู่ด้วย' : 'ใช้งานแบบ No-Login Bridge (ไม่ต้องเข้าสู่ระบบ Google)'}
+                </span>
+                {isOAuthSignedIn ? (
+                  <button
+                    type="button"
+                    onClick={() => onGoogleSignOut && onGoogleSignOut()}
+                    className="px-2.5 py-1 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <LogOut className="w-3 h-3" />
+                    <span>Sign out Google Account</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onGoogleSignIn && onGoogleSignIn()}
+                    className="px-2.5 py-1 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <LogIn className="w-3 h-3" />
+                    <span>Sign in with Google (Optional)</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           
           {/* Card 1: Google Sheet ID config */}
           <div className="bg-white rounded border border-slate-200 p-4">
@@ -255,13 +662,13 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
               </div>
               <div>
                 <h2 className="font-bold text-xs text-slate-800 uppercase tracking-wider">Google Sheets Connection</h2>
-                <p className="text-[11px] text-slate-500 mt-0.5">Link an existing spreadsheet or generate a structured template inside your Google Drive.</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">ระบุ Spreadsheet ID ของไฟล์เดิม ระบบจะบันทึกให้ทุกเครื่องใช้งานร่วมกันแบบ Real-time</p>
               </div>
             </div>
 
             <div className="space-y-3">
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Google Spreadsheet ID</label>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Primary Google Spreadsheet ID (Service Jobs & Quotations)</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -280,7 +687,7 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 mt-4">Secondary Spreadsheet ID (For PM/CM)</label>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 mt-3">Secondary Spreadsheet ID (For PM Schedule / CM Status Board)</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -291,6 +698,25 @@ export default function Settings({ settings, onUpdateSettings, accessToken }: Se
                   />
                   <button
                     onClick={savePmSpreadsheetId}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 md:px-3 md:py-1.5 rounded font-bold text-sm md:text-xs min-h-[44px] md:min-h-0 shadow-sm transition-colors cursor-pointer shrink-0"
+                  >
+                    Save ID
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 mt-3">CM On Call Spreadsheet ID (DATABASE TARGET USER)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={cmOnCallSpreadsheetInput}
+                    onChange={(e) => setCmOnCallSpreadsheetInput(e.target.value)}
+                    placeholder="CM On Call Sheet ID"
+                    className="flex-1 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded text-slate-800 placeholder-slate-400 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
+                  />
+                  <button
+                    onClick={saveCmOnCallSpreadsheetId}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 md:px-3 md:py-1.5 rounded font-bold text-sm md:text-xs min-h-[44px] md:min-h-0 shadow-sm transition-colors cursor-pointer shrink-0"
                   >
                     Save ID

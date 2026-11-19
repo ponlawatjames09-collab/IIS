@@ -60,6 +60,8 @@ export interface SystemSettings {
   spreadsheetId: string | null;
   pmSpreadsheetId?: string | null;
   cmOnCallSpreadsheetId?: string | null;
+  gasWebAppUrl?: string | null;
+  drivePdfFolderId?: string | null;
   lineConfig: LineConfig;
   engineers: string[];
   engineerEmails?: Record<string, string>;

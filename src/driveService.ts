@@ -1,8 +1,31 @@
+import { callGoogleBridge, shouldUseBridge } from './googleBridgeClient';
+
 /**
  * Google Drive API service for creating folders and uploading PDF reports
+ * Supports No-Login Bridge Mode (GAS / Service Account) and optional OAuth token.
  */
 
+const blobToBase64 = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = String(reader.result || '');
+      const commaIdx = result.indexOf(',');
+      resolve(commaIdx !== -1 ? result.slice(commaIdx + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to encode file to base64'));
+    reader.readAsDataURL(blob);
+  });
+
 export const createDriveFolder = async (accessToken: string, folderName: string): Promise<string> => {
+  if (shouldUseBridge(accessToken)) {
+    const bridgeRes = await callGoogleBridge<{ id: string }>('createDriveFolder', { folderName });
+    if (!bridgeRes.ok || !bridgeRes.data?.id) {
+      throw new Error(`Failed to create Drive folder: ${bridgeRes.error || `HTTP ${bridgeRes.status}`}`);
+    }
+    return bridgeRes.data.id;
+  }
+
   try {
     const res = await fetch('https://www.googleapis.com/drive/v3/files', {
       method: 'POST',
@@ -35,8 +58,21 @@ export const uploadPDFToDrive = async (
   filename: string,
   parentFolderId?: string
 ): Promise<{ id: string; webViewLink: string }> => {
+  if (shouldUseBridge(accessToken)) {
+    const base64Data = await blobToBase64(pdfBlob);
+    const bridgeRes = await callGoogleBridge<{ id: string; webViewLink: string }>('uploadFile', {
+      name: filename,
+      mimeType: 'application/pdf',
+      base64Data,
+      parentFolderId
+    });
+    if (!bridgeRes.ok || !bridgeRes.data) {
+      throw new Error(`Failed to upload PDF: ${bridgeRes.error || `HTTP ${bridgeRes.status}`}`);
+    }
+    return bridgeRes.data;
+  }
+
   try {
-    // Standard multipart upload for file + metadata
     const metadata: any = {
       name: filename,
       mimeType: 'application/pdf',
@@ -47,20 +83,13 @@ export const uploadPDFToDrive = async (
     }
 
     const boundary = 'foo_bar_boundary';
-    
-    // Construct multipart form body
     const metadataPart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`;
-    
-    // Convert Blob to ArrayBuffer
     const arrayBuffer = await pdfBlob.arrayBuffer();
     const pdfData = new Uint8Array(arrayBuffer);
-    
-    // We need to build a binary payload or upload metadata first, then update media.
-    // However, Google Drive supports /upload/drive/v3/files?uploadType=multipart.
-    // Let's build the multipart body cleanly as a Blob.
+
     const beforePart = new TextEncoder().encode(metadataPart + `--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`);
     const afterPart = new TextEncoder().encode(`\r\n--${boundary}--`);
-    
+
     const multipartBlob = new Blob([beforePart, pdfData, afterPart], { type: `multipart/related; boundary=${boundary}` });
 
     const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink', {
@@ -89,6 +118,20 @@ export const uploadImageToDrive = async (
   imageFile: File,
   parentFolderId?: string
 ): Promise<{ id: string; webViewLink: string }> => {
+  if (shouldUseBridge(accessToken)) {
+    const base64Data = await blobToBase64(imageFile);
+    const bridgeRes = await callGoogleBridge<{ id: string; webViewLink: string }>('uploadFile', {
+      name: imageFile.name,
+      mimeType: imageFile.type || 'image/jpeg',
+      base64Data,
+      parentFolderId
+    });
+    if (!bridgeRes.ok || !bridgeRes.data) {
+      throw new Error(`Failed to upload Image: ${bridgeRes.error || `HTTP ${bridgeRes.status}`}`);
+    }
+    return bridgeRes.data;
+  }
+
   try {
     const metadata: any = {
       name: imageFile.name,
@@ -99,13 +142,13 @@ export const uploadImageToDrive = async (
     }
     const boundary = 'foo_bar_boundary';
     const metadataPart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`;
-    
+
     const arrayBuffer = await imageFile.arrayBuffer();
     const imageData = new Uint8Array(arrayBuffer);
-    
+
     const beforePart = new TextEncoder().encode(metadataPart + `--${boundary}\r\nContent-Type: ${imageFile.type}\r\n\r\n`);
     const afterPart = new TextEncoder().encode(`\r\n--${boundary}--`);
-    
+
     const multipartBlob = new Blob([beforePart, imageData, afterPart], { type: `multipart/related; boundary=${boundary}` });
     const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink', {
       method: 'POST',
@@ -125,3 +168,4 @@ export const uploadImageToDrive = async (
     throw error;
   }
 };
+

@@ -1,7 +1,354 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { JWT } from "google-auth-library";
 import express from "express";
+import fs from "fs";
 import path from "path";
 import { THAILAND_REGIONS, THAILAND_HOSPITALS_DATABASE, resolveHospitalLocation } from "./src/data/thailandHospitalData";
+
+interface ServiceAccountCredentials {
+  client_email: string;
+  private_key: string;
+  project_id?: string;
+}
+
+interface BridgeConfigStore {
+  gasWebAppUrl: string;
+  spreadsheetId: string;
+  pmSpreadsheetId: string;
+  cmOnCallSpreadsheetId: string;
+  drivePdfFolderId: string;
+  serviceAccount: ServiceAccountCredentials | null;
+}
+
+const BRIDGE_CONFIG_FILE = path.join(process.cwd(), ".bridge-config.json");
+
+function parseServiceAccountJson(raw: string | undefined | null): ServiceAccountCredentials | null {
+  if (!raw || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw.trim());
+    if (parsed && typeof parsed.client_email === "string" && typeof parsed.private_key === "string") {
+      return {
+        client_email: parsed.client_email,
+        private_key: parsed.private_key.replace(/\\n/g, "\n"),
+        project_id: parsed.project_id
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function loadBridgeConfig(): BridgeConfigStore {
+  let fileData: Partial<BridgeConfigStore> = {};
+  try {
+    if (fs.existsSync(BRIDGE_CONFIG_FILE)) {
+      fileData = JSON.parse(fs.readFileSync(BRIDGE_CONFIG_FILE, "utf8")) || {};
+    }
+  } catch (err) {
+    console.warn("Could not read .bridge-config.json:", err);
+  }
+
+  return {
+    gasWebAppUrl: fileData.gasWebAppUrl || process.env.GAS_WEB_APP_URL || "",
+    spreadsheetId: fileData.spreadsheetId || process.env.DEFAULT_SPREADSHEET_ID || "",
+    pmSpreadsheetId: fileData.pmSpreadsheetId || process.env.DEFAULT_PM_SPREADSHEET_ID || "",
+    cmOnCallSpreadsheetId:
+      fileData.cmOnCallSpreadsheetId ||
+      process.env.DEFAULT_CM_ONCALL_SPREADSHEET_ID ||
+      "19c9vJhO4qMdCP1O7rwWP_aUZyTqQrTwnzWWxtH7zDdE",
+    drivePdfFolderId: fileData.drivePdfFolderId || process.env.DEFAULT_DRIVE_PDF_FOLDER_ID || "",
+    serviceAccount:
+      (fileData.serviceAccount && fileData.serviceAccount.client_email && fileData.serviceAccount.private_key
+        ? fileData.serviceAccount
+        : null) || parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON)
+  };
+}
+
+function saveBridgeConfig(config: BridgeConfigStore) {
+  try {
+    fs.writeFileSync(BRIDGE_CONFIG_FILE, JSON.stringify(config, null, 2), "utf8");
+  } catch (err) {
+    console.warn("Could not persist .bridge-config.json:", err);
+  }
+}
+
+let cachedServiceToken: { token: string; expiresAt: number; email: string } | null = null;
+
+async function getServiceAccountAccessToken(sa: ServiceAccountCredentials): Promise<string> {
+  if (
+    cachedServiceToken &&
+    cachedServiceToken.email === sa.client_email &&
+    Date.now() < cachedServiceToken.expiresAt - 60_000
+  ) {
+    return cachedServiceToken.token;
+  }
+
+  const client = new JWT({
+    email: sa.client_email,
+    key: sa.private_key,
+    scopes: [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/drive"
+    ]
+  });
+
+  const tokenRes = await client.getAccessToken();
+  const token = tokenRes?.token;
+  if (!token) {
+    throw new Error("Failed to obtain access token from Service Account.");
+  }
+
+  cachedServiceToken = {
+    token,
+    email: sa.client_email,
+    expiresAt: Date.now() + 50 * 60 * 1000
+  };
+  return token;
+}
+
+async function executeViaServiceAccount(
+  sa: ServiceAccountCredentials,
+  action: string,
+  payload: any
+): Promise<{ status: number; body: any }> {
+  const token = await getServiceAccountAccessToken(sa);
+  const authHeaders = { Authorization: `Bearer ${token}` };
+  const jsonHeaders = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json"
+  };
+
+  switch (action) {
+    case "ping":
+      return {
+        status: 200,
+        body: { ok: true, data: { message: `Service Account ready (${sa.client_email})` } }
+      };
+
+    case "getMetadata": {
+      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${payload.spreadsheetId}`, {
+        headers: authHeaders
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          status: res.status,
+          body: { ok: false, status: res.status, error: data?.error?.message || `HTTP ${res.status}` }
+        };
+      }
+      return { status: 200, body: { ok: true, data } };
+    }
+
+    case "getValues": {
+      const range = encodeURIComponent(payload.range);
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${payload.spreadsheetId}/values/${range}`,
+        { headers: authHeaders }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          status: res.status,
+          body: { ok: false, status: res.status, error: data?.error?.message || `HTTP ${res.status}` }
+        };
+      }
+      return { status: 200, body: { ok: true, data } };
+    }
+
+    case "batchGetValues": {
+      const rangesQuery = (payload.ranges || [])
+        .map((r: string) => `ranges=${encodeURIComponent(r)}`)
+        .join("&");
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${payload.spreadsheetId}/values:batchGet?${rangesQuery}`,
+        { headers: authHeaders }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          status: res.status,
+          body: { ok: false, status: res.status, error: data?.error?.message || `HTTP ${res.status}` }
+        };
+      }
+      return { status: 200, body: { ok: true, data } };
+    }
+
+    case "updateValues": {
+      const range = encodeURIComponent(payload.range);
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${payload.spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`,
+        {
+          method: "PUT",
+          headers: jsonHeaders,
+          body: JSON.stringify({ values: payload.values || [] })
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          status: res.status,
+          body: { ok: false, status: res.status, error: data?.error?.message || `HTTP ${res.status}` }
+        };
+      }
+      return { status: 200, body: { ok: true, data } };
+    }
+
+    case "appendValues": {
+      const range = encodeURIComponent(payload.range);
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${payload.spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+        {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({ values: payload.values || [] })
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          status: res.status,
+          body: { ok: false, status: res.status, error: data?.error?.message || `HTTP ${res.status}` }
+        };
+      }
+      return { status: 200, body: { ok: true, data } };
+    }
+
+    case "clearValues": {
+      const range = encodeURIComponent(payload.range);
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${payload.spreadsheetId}/values/${range}:clear`,
+        {
+          method: "POST",
+          headers: jsonHeaders
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          status: res.status,
+          body: { ok: false, status: res.status, error: data?.error?.message || `HTTP ${res.status}` }
+        };
+      }
+      return { status: 200, body: { ok: true, data } };
+    }
+
+    case "addSheet": {
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${payload.spreadsheetId}:batchUpdate`,
+        {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify({
+            requests: [{ addSheet: { properties: { title: payload.title } } }]
+          })
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          status: res.status,
+          body: { ok: false, status: res.status, error: data?.error?.message || `HTTP ${res.status}` }
+        };
+      }
+      return { status: 200, body: { ok: true, data } };
+    }
+
+    case "createSpreadsheet": {
+      const sheetTitles: string[] = payload.sheetTitles || ["JAN2026"];
+      const createRes = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          properties: { title: payload.title || "Service Job Hub - 2026" },
+          sheets: sheetTitles.map((title) => ({ properties: { title } }))
+        })
+      });
+      const created = await createRes.json();
+      if (!createRes.ok) {
+        return {
+          status: createRes.status,
+          body: { ok: false, status: createRes.status, error: created?.error?.message || "Failed to create spreadsheet" }
+        };
+      }
+      if (payload.headers && payload.headers.length > 0) {
+        await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${created.spreadsheetId}/values:batchUpdate`,
+          {
+            method: "POST",
+            headers: jsonHeaders,
+            body: JSON.stringify({
+              valueInputOption: "RAW",
+              data: sheetTitles.map((t) => ({ range: `${t}!A1:BC1`, values: [payload.headers] }))
+            })
+          }
+        );
+      }
+      return { status: 200, body: { ok: true, data: { spreadsheetId: created.spreadsheetId } } };
+    }
+
+    case "createDriveFolder": {
+      const bodyPayload: any = {
+        name: payload.folderName || "Service Job Sheets PDF",
+        mimeType: "application/vnd.google-apps.folder"
+      };
+      if (payload.parentFolderId) bodyPayload.parents = [payload.parentFolderId];
+      const res = await fetch("https://www.googleapis.com/drive/v3/files", {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify(bodyPayload)
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          status: res.status,
+          body: { ok: false, status: res.status, error: data?.error?.message || "Failed to create folder" }
+        };
+      }
+      return { status: 200, body: { ok: true, data } };
+    }
+
+    case "uploadFile": {
+      const metadata: any = {
+        name: payload.name || "file",
+        mimeType: payload.mimeType || "application/octet-stream"
+      };
+      if (payload.parentFolderId) metadata.parents = [payload.parentFolderId];
+
+      const boundary = "iis_service_bridge_boundary";
+      const fileBuffer = Buffer.from(payload.base64Data || "", "base64");
+      const metaPart = Buffer.from(
+        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${metadata.mimeType}\r\n\r\n`,
+        "utf8"
+      );
+      const endPart = Buffer.from(`\r\n--${boundary}--`, "utf8");
+      const multipartBody = Buffer.concat([metaPart, fileBuffer, endPart]);
+
+      const res = await fetch(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": `multipart/related; boundary=${boundary}`
+          },
+          body: multipartBody
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          status: res.status,
+          body: { ok: false, status: res.status, error: data?.error?.message || "Failed to upload file" }
+        };
+      }
+      return { status: 200, body: { ok: true, data } };
+    }
+
+    default:
+      return { status: 400, body: { ok: false, status: 400, error: `Unknown action: ${action}` } };
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -9,6 +356,168 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  // ==========================================
+  // No-Login Google Bridge Config & Proxy APIs
+  // ==========================================
+  app.get("/api/bridge/config", (req, res) => {
+    const cfg = loadBridgeConfig();
+    const mode = cfg.gasWebAppUrl
+      ? "gas"
+      : cfg.serviceAccount
+      ? "service_account"
+      : "none";
+
+    res.json({
+      configured: mode !== "none",
+      mode,
+      gasWebAppUrl: cfg.gasWebAppUrl,
+      hasServiceAccount: Boolean(cfg.serviceAccount),
+      serviceAccountEmail: cfg.serviceAccount?.client_email || null,
+      spreadsheetId: cfg.spreadsheetId,
+      pmSpreadsheetId: cfg.pmSpreadsheetId,
+      cmOnCallSpreadsheetId: cfg.cmOnCallSpreadsheetId,
+      drivePdfFolderId: cfg.drivePdfFolderId
+    });
+  });
+
+  app.post("/api/bridge/config", (req, res) => {
+    try {
+      const current = loadBridgeConfig();
+      const {
+        gasWebAppUrl,
+        spreadsheetId,
+        pmSpreadsheetId,
+        cmOnCallSpreadsheetId,
+        drivePdfFolderId,
+        serviceAccountJson,
+        clearServiceAccount
+      } = req.body || {};
+
+      const next: BridgeConfigStore = {
+        gasWebAppUrl: typeof gasWebAppUrl === "string" ? gasWebAppUrl.trim() : current.gasWebAppUrl,
+        spreadsheetId: typeof spreadsheetId === "string" ? spreadsheetId.trim() : current.spreadsheetId,
+        pmSpreadsheetId: typeof pmSpreadsheetId === "string" ? pmSpreadsheetId.trim() : current.pmSpreadsheetId,
+        cmOnCallSpreadsheetId:
+          typeof cmOnCallSpreadsheetId === "string"
+            ? cmOnCallSpreadsheetId.trim()
+            : current.cmOnCallSpreadsheetId,
+        drivePdfFolderId:
+          typeof drivePdfFolderId === "string" ? drivePdfFolderId.trim() : current.drivePdfFolderId,
+        serviceAccount: current.serviceAccount
+      };
+
+      if (clearServiceAccount) {
+        next.serviceAccount = null;
+        cachedServiceToken = null;
+      } else if (typeof serviceAccountJson === "string" && serviceAccountJson.trim()) {
+        const parsed = parseServiceAccountJson(serviceAccountJson);
+        if (!parsed) {
+          return res.status(400).json({
+            error: "Service Account JSON ไม่ถูกต้อง (ต้องมี client_email และ private_key)"
+          });
+        }
+        next.serviceAccount = parsed;
+        cachedServiceToken = null;
+      }
+
+      saveBridgeConfig(next);
+
+      const mode = next.gasWebAppUrl
+        ? "gas"
+        : next.serviceAccount
+        ? "service_account"
+        : "none";
+
+      res.json({
+        success: true,
+        configured: mode !== "none",
+        mode,
+        gasWebAppUrl: next.gasWebAppUrl,
+        hasServiceAccount: Boolean(next.serviceAccount),
+        serviceAccountEmail: next.serviceAccount?.client_email || null,
+        spreadsheetId: next.spreadsheetId,
+        pmSpreadsheetId: next.pmSpreadsheetId,
+        cmOnCallSpreadsheetId: next.cmOnCallSpreadsheetId,
+        drivePdfFolderId: next.drivePdfFolderId
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to update bridge config" });
+    }
+  });
+
+  app.post("/api/google-bridge", async (req, res) => {
+    try {
+      const { action, payload, gasWebAppUrl } = req.body || {};
+      if (!action) {
+        return res.status(400).json({ ok: false, error: "action is required" });
+      }
+
+      const cfg = loadBridgeConfig();
+      const targetGasUrl = (typeof gasWebAppUrl === "string" && gasWebAppUrl.trim()) || cfg.gasWebAppUrl;
+
+      // Priority 1: Google Apps Script Web App Bridge
+      if (targetGasUrl) {
+        const gasRes = await fetch(targetGasUrl, {
+          method: "POST",
+          redirect: "follow",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+          },
+          body: JSON.stringify({ action, payload: payload || {} })
+        });
+
+        const rawText = await gasRes.text();
+        if (rawText.trim().startsWith("<")) {
+          return res.status(403).json({
+            ok: false,
+            status: 403,
+            error:
+              "Apps Script Web App ส่งหน้า Login HTML กลับมา — กรุณาตั้งค่า Deploy > Who has access เป็น 'Anyone' (ทุกคน) แล้วนำ URL ใหม่มาใส่"
+          });
+        }
+
+        let parsed: any;
+        try {
+          parsed = JSON.parse(rawText);
+        } catch {
+          return res.status(502).json({
+            ok: false,
+            status: 502,
+            error: `Apps Script response is not valid JSON: ${rawText.slice(0, 200)}`
+          });
+        }
+
+        if (!parsed.ok) {
+          const errStatus = Number(parsed.status) || 500;
+          return res.status(errStatus).json(parsed);
+        }
+
+        return res.json(parsed);
+      }
+
+      // Priority 2: Google Service Account
+      if (cfg.serviceAccount) {
+        const saResult = await executeViaServiceAccount(cfg.serviceAccount, action, payload || {});
+        return res.status(saResult.status).json(saResult.body);
+      }
+
+      return res.status(503).json({
+        ok: false,
+        status: 503,
+        errorCode: "BRIDGE_NOT_CONFIGURED",
+        error:
+          "ยังไม่ได้เชื่อมต่อ Apps Script Bridge หรือ Service Account — กรุณาไปที่ System Connections เพื่อวาง Web App URL"
+      });
+    } catch (err: any) {
+      console.error("Google Bridge Error:", err);
+      res.status(500).json({
+        ok: false,
+        status: 500,
+        error: err.message || "Google Bridge proxy error"
+      });
+    }
+  });
 
   // LINE Webhook Endpoint for fetching Group ID
   app.post("/webhook", async (req, res) => {
