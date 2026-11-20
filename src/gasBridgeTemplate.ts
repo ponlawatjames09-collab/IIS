@@ -333,7 +333,7 @@ function handleAddSheet_(payload) {
 }
 
 function handleCreateSpreadsheet_(payload) {
-  var title = payload.title || "Service Job Hub - 2026";
+  var title = payload.title || "Call Center Record / FR-SV-04; Rev.00";
   var sheetTitles = payload.sheetTitles || ["JAN2026"];
   var headers = payload.headers || null;
 

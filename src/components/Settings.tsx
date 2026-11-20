@@ -291,7 +291,7 @@ export default function Settings({
       try {
         await syncServerBridgeConfig({ spreadsheetId: newId });
       } catch {}
-      setSpreadsheetSuccess("Brand new Service Job Hub - 2026 Spreadsheet successfully created in Google Drive with all 12 monthly sheets!");
+      setSpreadsheetSuccess("Brand new Call Center Record / FR-SV-04; Rev.00 Spreadsheet successfully created in Google Drive with all 12 monthly sheets!");
     } catch (err: any) {
       setSpreadsheetError(`Failed to create spreadsheet: ${err.message || err}`);
     } finally {

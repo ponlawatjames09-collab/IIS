@@ -757,7 +757,7 @@ export default function App() {
               }`}
             >
               <CalendarDays className="w-4 h-4 shrink-0" />
-              <span>Dispatch / Assign</span>
+              <span>WorkServicePlan</span>
             </button>
 
             <button

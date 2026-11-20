@@ -443,7 +443,7 @@ export const mapJobToRow = (job: ServiceJob): any[] => {
  * Creates a brand new Spreadsheet in Google Drive with monthly tabs and standard headers.
  */
 export const createSpreadsheet = async (accessToken: string): Promise<string> => {
-  return await sheetsCreateSpreadsheet("Service Job Hub - 2026", MONTHS, HEADERS, accessToken);
+  return await sheetsCreateSpreadsheet("Call Center Record / FR-SV-04; Rev.00", MONTHS, HEADERS, accessToken);
 };
 
 /**
@@ -1214,7 +1214,7 @@ export const updateQuotationWinRate = async (
 
 // ---------------- Dispatch Schedule ---------------- //
 export const fetchDispatchRecords = async (spreadsheetId: string, accessToken: string): Promise<import('./types').DispatchRecord[]> => {
-  const sheetName = 'DispatchSchedule';
+  const sheetName = 'WorkServicePlan';
   try {
     const res = await sheetsGetValues(spreadsheetId, `${sheetName}!A2:G`, accessToken);
     if (!res.ok) {
@@ -1240,7 +1240,7 @@ export const fetchDispatchRecords = async (spreadsheetId: string, accessToken: s
 };
 
 export const appendDispatchRecord = async (spreadsheetId: string, accessToken: string, record: import('./types').DispatchRecord): Promise<void> => {
-  const sheetName = 'DispatchSchedule';
+  const sheetName = 'WorkServicePlan';
   try {
     const metaData = await sheetsGetMeta(spreadsheetId, accessToken);
     const existingSheetTitles = (metaData.sheets || []).map((s: any) => s.properties.title);
@@ -1265,7 +1265,7 @@ export const appendDispatchRecord = async (spreadsheetId: string, accessToken: s
 };
 
 export const deleteDispatchRecord = async (spreadsheetId: string, accessToken: string, rowIndex: number): Promise<void> => {
-  const sheetName = 'DispatchSchedule';
+  const sheetName = 'WorkServicePlan';
   const range = `${sheetName}!A${rowIndex}:G${rowIndex}`;
   const values = [['', '', '', '', '', '', '']];
   const res = await sheetsUpdateValues(spreadsheetId, range, values, accessToken);
@@ -1276,7 +1276,7 @@ export const deleteDispatchRecord = async (spreadsheetId: string, accessToken: s
 
 export const updateDispatchRecord = async (spreadsheetId: string, accessToken: string, record: import('./types').DispatchRecord): Promise<void> => {
   if (!record.rowIndex) return;
-  const sheetName = 'DispatchSchedule';
+  const sheetName = 'WorkServicePlan';
   const range = `${sheetName}!A${record.rowIndex}:G${record.rowIndex}`;
   const values = [[record.id, record.date, record.engineer, record.taskTitle, record.location, record.remark, record.status]];
   const res = await sheetsUpdateValues(spreadsheetId, range, values, accessToken);

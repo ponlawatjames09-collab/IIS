@@ -1665,7 +1665,7 @@ async function executeViaServiceAccount(sa, action, payload) {
         method: "POST",
         headers: jsonHeaders,
         body: JSON.stringify({
-          properties: { title: payload.title || "Service Job Hub - 2026" },
+          properties: { title: payload.title || "Call Center Record / FR-SV-04; Rev.00" },
           sheets: sheetTitles.map((title) => ({ properties: { title } }))
         })
       });

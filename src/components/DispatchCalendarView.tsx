@@ -233,7 +233,7 @@ export default function DispatchCalendarView({ settings, accessToken }: Dispatch
         <div>
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <CalendarIcon className="w-6 h-6 text-indigo-600" />
-            Engineer Dispatch
+            WorkServicePlan
           </h2>
           <p className="text-sm text-slate-500 mt-1">Assign advance jobs and schedule tasks for engineers.</p>
         </div>
