@@ -1,47 +1,12 @@
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-// vercel-entry.ts
-var vercel_entry_exports = {};
-__export(vercel_entry_exports, {
-  default: () => handler
-});
-module.exports = __toCommonJS(vercel_entry_exports);
-
 // serverApp.ts
-var import_config = require("dotenv/config");
-var import_genai = require("@google/genai");
-var import_google_auth_library = require("google-auth-library");
-var import_express = __toESM(require("express"), 1);
-var import_fs = __toESM(require("fs"), 1);
-var import_http = __toESM(require("http"), 1);
-var import_https = __toESM(require("https"), 1);
-var import_path = __toESM(require("path"), 1);
+import "dotenv/config";
+import { GoogleGenAI, Type } from "@google/genai";
+import { JWT } from "google-auth-library";
+import express from "express";
+import fs from "fs";
+import http from "http";
+import https from "https";
+import path from "path";
 
 // src/data/thailandHospitalData.ts
 var THAILAND_REGIONS = {
@@ -1452,7 +1417,7 @@ function resolveHospitalLocation(hospitalName, hintRegion) {
 
 // serverApp.ts
 var IS_VERCEL = Boolean(process.env.VERCEL);
-var BRIDGE_CONFIG_FILE = IS_VERCEL ? import_path.default.join("/tmp", ".bridge-config.json") : import_path.default.join(process.cwd(), ".bridge-config.json");
+var BRIDGE_CONFIG_FILE = IS_VERCEL ? path.join("/tmp", ".bridge-config.json") : path.join(process.cwd(), ".bridge-config.json");
 var EMBEDDED_SPREADSHEET_ID = "1s2VkerbQ7y0BeHBcdtzkXtsxzn-VR6ZMw2l0p9NCiP8";
 var EMBEDDED_PM_SPREADSHEET_ID = "1wBbN1127iViI_0pXZU2RUoVeuSxQfZsI0qoIgxaaO4s";
 var EMBEDDED_CM_ONCALL_SPREADSHEET_ID = "19c9vJhO4qMdCP1O7rwWP_aUZyTqQrTwnzWWxtH7zDdE";
@@ -1514,8 +1479,8 @@ function loadBridgeConfig() {
   }
   let fileData = {};
   try {
-    if (import_fs.default.existsSync(BRIDGE_CONFIG_FILE)) {
-      fileData = JSON.parse(import_fs.default.readFileSync(BRIDGE_CONFIG_FILE, "utf8")) || {};
+    if (fs.existsSync(BRIDGE_CONFIG_FILE)) {
+      fileData = JSON.parse(fs.readFileSync(BRIDGE_CONFIG_FILE, "utf8")) || {};
     }
   } catch (err) {
     console.warn("Could not read bridge config file:", err);
@@ -1532,7 +1497,7 @@ function loadBridgeConfig() {
 function saveBridgeConfig(config) {
   memoryBridgeConfig = config;
   try {
-    import_fs.default.writeFileSync(BRIDGE_CONFIG_FILE, JSON.stringify(config, null, 2), "utf8");
+    fs.writeFileSync(BRIDGE_CONFIG_FILE, JSON.stringify(config, null, 2), "utf8");
   } catch (err) {
     console.warn("Could not persist bridge config file:", err);
   }
@@ -1542,7 +1507,7 @@ async function getServiceAccountAccessToken(sa) {
   if (cachedServiceToken && cachedServiceToken.email === sa.client_email && Date.now() < cachedServiceToken.expiresAt - 6e4) {
     return cachedServiceToken.token;
   }
-  const client = new import_google_auth_library.JWT({
+  const client = new JWT({
     email: sa.client_email,
     key: sa.private_key,
     scopes: [
@@ -1795,7 +1760,7 @@ Content-Type: ${metadata.mimeType}\r
 function doRawHttpRequest(targetUrl, options) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(targetUrl);
-    const transport = parsedUrl.protocol === "http:" ? import_http.default : import_https.default;
+    const transport = parsedUrl.protocol === "http:" ? http : https;
     const reqHeaders = {
       "User-Agent": "IIS-Service-Bridge/1.0",
       "Accept": "application/json, text/plain, */*",
@@ -1897,9 +1862,9 @@ function targetUrlFrom(url) {
   return url;
 }
 function createExpressApp() {
-  const app = (0, import_express.default)();
-  app.use(import_express.default.json({ limit: "50mb" }));
-  app.use(import_express.default.urlencoded({ limit: "50mb", extended: true }));
+  const app = express();
+  app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ limit: "50mb", extended: true }));
   app.get("/api/bridge/config", (req, res) => {
     const cfg = loadBridgeConfig();
     const mode = cfg.gasWebAppUrl ? "gas" : cfg.serviceAccount ? "service_account" : "none";
@@ -2245,7 +2210,7 @@ User ID \u0E02\u0E2D\u0E07\u0E04\u0E38\u0E13\u0E04\u0E37\u0E2D: ${userId}` }]
       if (!apiKey) {
         return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server" });
       }
-      const ai = new import_genai.GoogleGenAI({
+      const ai = new GoogleGenAI({
         apiKey,
         httpOptions: {
           headers: {
@@ -2274,15 +2239,15 @@ User ID \u0E02\u0E2D\u0E07\u0E04\u0E38\u0E13\u0E04\u0E37\u0E2D: ${userId}` }]
             config: {
               responseMimeType: "application/json",
               responseSchema: {
-                type: import_genai.Type.OBJECT,
+                type: Type.OBJECT,
                 properties: {
-                  date: { type: import_genai.Type.STRING, description: "Date of the quotation (\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48)" },
-                  quotationNumber: { type: import_genai.Type.STRING, description: "Quotation number (\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48)" },
-                  customerName: { type: import_genai.Type.STRING, description: "Customer name or hospital name (\u0E25\u0E39\u0E01\u0E04\u0E49\u0E32 / \u0E0A\u0E37\u0E48\u0E2D\u0E42\u0E23\u0E07\u0E1E\u0E22\u0E32\u0E1A\u0E32\u0E25)" },
-                  jobName: { type: import_genai.Type.STRING, description: "Job name or project name (\u0E0A\u0E37\u0E48\u0E2D\u0E07\u0E32\u0E19)" },
-                  description: { type: import_genai.Type.STRING, description: "Description or list of items (\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14)" },
-                  totalAmount: { type: import_genai.Type.NUMBER, description: "Total amount including tax as a number (\u0E08\u0E33\u0E19\u0E27\u0E19\u0E40\u0E07\u0E34\u0E19\u0E23\u0E27\u0E21\u0E17\u0E31\u0E49\u0E07\u0E2A\u0E34\u0E49\u0E19)" },
-                  jobType: { type: import_genai.Type.STRING, description: "Job Type (usually PM or CM), extracted from '\u0E2D\u0E49\u0E32\u0E07\u0E2D\u0E34\u0E07' (Reference)" }
+                  date: { type: Type.STRING, description: "Date of the quotation (\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48)" },
+                  quotationNumber: { type: Type.STRING, description: "Quotation number (\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48)" },
+                  customerName: { type: Type.STRING, description: "Customer name or hospital name (\u0E25\u0E39\u0E01\u0E04\u0E49\u0E32 / \u0E0A\u0E37\u0E48\u0E2D\u0E42\u0E23\u0E07\u0E1E\u0E22\u0E32\u0E1A\u0E32\u0E25)" },
+                  jobName: { type: Type.STRING, description: "Job name or project name (\u0E0A\u0E37\u0E48\u0E2D\u0E07\u0E32\u0E19)" },
+                  description: { type: Type.STRING, description: "Description or list of items (\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14)" },
+                  totalAmount: { type: Type.NUMBER, description: "Total amount including tax as a number (\u0E08\u0E33\u0E19\u0E27\u0E19\u0E40\u0E07\u0E34\u0E19\u0E23\u0E27\u0E21\u0E17\u0E31\u0E49\u0E07\u0E2A\u0E34\u0E49\u0E19)" },
+                  jobType: { type: Type.STRING, description: "Job Type (usually PM or CM), extracted from '\u0E2D\u0E49\u0E32\u0E07\u0E2D\u0E34\u0E07' (Reference)" }
                 },
                 required: ["date", "quotationNumber", "jobName", "description", "totalAmount"]
               }
@@ -2351,4 +2316,6 @@ function handler(req, res) {
     );
   }
 }
-if(module.exports&&module.exports.default){module.exports=module.exports.default;}
+export {
+  handler as default
+};
