@@ -865,18 +865,27 @@ export default function Settings({
               {/* LINE OA */}
               <div className="space-y-3">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">Line OA Messaging API (For Official Accounts)</label>
+                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800 space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>เชื่อมต่อ LINE OA ถาวรในระบบแล้ว (Embedded Ready)</span>
+                  </div>
+                  <p className="text-[10px] text-emerald-700 leading-relaxed">
+                    ฝัง Channel Access Token และ Target User ID (<span className="font-mono font-semibold">U6299f07e82be6a58c5d5342d281bf156</span>) ลงใน Server ถาวรแล้ว ส่งแจ้งเตือนอัตโนมัติทุกเครื่องโดยไม่ต้องกรอกใหม่ (กรอกด้านล่างเฉพาะกรณีต้องการเปลี่ยนค่าชั่วคราว)
+                  </p>
+                </div>
                 <input
                   type="password"
                   value={settings.lineConfig.channelAccessToken || ''}
                   onChange={(e) => onUpdateSettings({ ...settings, lineConfig: { ...settings.lineConfig, channelAccessToken: e.target.value } })}
-                  placeholder="Channel Access Token (Long-lived)"
+                  placeholder="ใช้ Token ถาวรของระบบอยู่ (เว้นว่างไว้ หรือกรอกเพื่อแทนที่)"
                   className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded text-slate-800 placeholder-slate-400 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
                 />
                 <input
                   type="text"
                   value={settings.lineConfig.userId || ''}
                   onChange={(e) => onUpdateSettings({ ...settings, lineConfig: { ...settings.lineConfig, userId: e.target.value } })}
-                  placeholder="Target User ID (e.g. U123456...)"
+                  placeholder="Target User ID (ค่าเริ่มต้น: U6299f07e82be6a58c5d5342d281bf156)"
                   className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded text-slate-800 placeholder-slate-400 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white"
                 />
               </div>
@@ -889,7 +898,7 @@ export default function Settings({
               </button>
 
               <p className="text-[10px] text-slate-500 leading-relaxed bg-amber-50/50 border border-amber-200 p-2.5 rounded">
-                💡 <strong>How it works:</strong> You can use either <strong>Line Notify</strong> (easy for groups) or <strong>Line OA</strong> (for official bot pushing to specific user). When a job is saved or updated, our backend will push alerts to the configured channels.
+                💡 <strong>How it works:</strong> ระบบฝังค่า LINE OA Messaging API (และ Telegram Bot) ไว้ที่ Backend ถาวรแล้ว ทุกเครื่องที่เปิดใช้งานจะส่งแจ้งเตือนอัตโนมัติทันทีเมื่อมีการบันทึกหรืออัปเดตงาน
               </p>
             </div>
           </div>

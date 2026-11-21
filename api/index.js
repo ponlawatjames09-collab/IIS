@@ -2001,7 +2001,7 @@ function createExpressApp() {
       if (!events || events.length === 0) {
         return res.status(200).send("OK");
       }
-      const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || req.query.token;
+      const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || req.query.token || EMBEDDED_LINE_CHANNEL_ACCESS_TOKEN;
       for (const event of events) {
         if (event.type === "message" && event.message.type === "text") {
           const text = event.message.text.trim();
@@ -2107,9 +2107,11 @@ User ID \u0E02\u0E2D\u0E07\u0E04\u0E38\u0E13\u0E04\u0E37\u0E2D: ${userId}` }]
   });
   const TELEGRAM_BOT_TOKEN = "9053573002:AAHZovzwSjReuDpAiZ7eeBoaHetwWFZqSkk";
   const TELEGRAM_CHAT_ID = "-1004379656642";
+  const EMBEDDED_LINE_CHANNEL_ACCESS_TOKEN = "2tNJ9uonYekriWaowXc3gv+mSEER3DJYSxvyuS9/tRnWYTmM7heSy8f1z/uL+07nu1wyf0P1afLoIx2NsOimbfcKnUDyfe43BeqWkLJpYAsWTydXxgWcas0rYtuDZDp3d9TO4b2buN79Xldf9wQCMAdB04t89/1O/w1cDnyilFU=";
+  const EMBEDDED_LINE_USER_ID = "U6299f07e82be6a58c5d5342d281bf156";
   app.post("/api/notify", async (req, res) => {
     try {
-      const { message, notifyToken, channelAccessToken, userId } = req.body;
+      const { message, notifyToken, channelAccessToken, userId, enableLineOA } = req.body;
       if (!message) {
         return res.status(400).json({ error: "Message is required" });
       }
@@ -2160,16 +2162,18 @@ User ID \u0E02\u0E2D\u0E07\u0E04\u0E38\u0E13\u0E04\u0E37\u0E2D: ${userId}` }]
           errors.push(`LINE Notify error: ${err.message}`);
         }
       }
-      if (channelAccessToken && userId) {
+      const effectiveLineOAToken = typeof channelAccessToken === "string" && channelAccessToken.trim() || process.env.LINE_CHANNEL_ACCESS_TOKEN || EMBEDDED_LINE_CHANNEL_ACCESS_TOKEN;
+      const effectiveLineUserId = typeof userId === "string" && userId.trim() || process.env.LINE_USER_ID || EMBEDDED_LINE_USER_ID;
+      if (enableLineOA !== false && effectiveLineOAToken && effectiveLineUserId) {
         try {
           const oaRes = await fetch("https://api.line.me/v2/bot/message/push", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `Bearer ${channelAccessToken}`
+              "Authorization": `Bearer ${effectiveLineOAToken}`
             },
             body: JSON.stringify({
-              to: userId,
+              to: effectiveLineUserId,
               messages: [
                 {
                   type: "text",

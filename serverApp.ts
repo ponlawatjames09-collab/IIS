@@ -737,7 +737,10 @@ export function createExpressApp() {
         return res.status(200).send("OK");
       }
 
-      const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || (req.query.token as string);
+      const channelAccessToken =
+        process.env.LINE_CHANNEL_ACCESS_TOKEN ||
+        (req.query.token as string) ||
+        EMBEDDED_LINE_CHANNEL_ACCESS_TOKEN;
 
       for (const event of events) {
         if (event.type === "message" && event.message.type === "text") {
@@ -856,10 +859,14 @@ export function createExpressApp() {
   const TELEGRAM_BOT_TOKEN = "9053573002:AAHZovzwSjReuDpAiZ7eeBoaHetwWFZqSkk";
   const TELEGRAM_CHAT_ID = "-1004379656642";
 
+  // Hardcoded LINE OA Messaging API Configuration (Embedded directly in system, no per-device setting required)
+  const EMBEDDED_LINE_CHANNEL_ACCESS_TOKEN = "2tNJ9uonYekriWaowXc3gv+mSEER3DJYSxvyuS9/tRnWYTmM7heSy8f1z/uL+07nu1wyf0P1afLoIx2NsOimbfcKnUDyfe43BeqWkLJpYAsWTydXxgWcas0rYtuDZDp3d9TO4b2buN79Xldf9wQCMAdB04t89/1O/w1cDnyilFU=";
+  const EMBEDDED_LINE_USER_ID = "U6299f07e82be6a58c5d5342d281bf156";
+
   // API Route for Notifications (Telegram + LINE OA / LINE Notify)
   app.post("/api/notify", async (req, res) => {
     try {
-      const { message, notifyToken, channelAccessToken, userId } = req.body;
+      const { message, notifyToken, channelAccessToken, userId, enableLineOA } = req.body;
 
       if (!message) {
         return res.status(400).json({ error: "Message is required" });
@@ -920,17 +927,26 @@ export function createExpressApp() {
         }
       }
 
-      // 3. Send via LINE OA Messaging API (if channel access token & user id provided)
-      if (channelAccessToken && userId) {
+      // 3. Send via LINE OA Messaging API (Embedded in system by default, or overridden if provided)
+      const effectiveLineOAToken =
+        (typeof channelAccessToken === "string" && channelAccessToken.trim()) ||
+        process.env.LINE_CHANNEL_ACCESS_TOKEN ||
+        EMBEDDED_LINE_CHANNEL_ACCESS_TOKEN;
+      const effectiveLineUserId =
+        (typeof userId === "string" && userId.trim()) ||
+        process.env.LINE_USER_ID ||
+        EMBEDDED_LINE_USER_ID;
+
+      if (enableLineOA !== false && effectiveLineOAToken && effectiveLineUserId) {
         try {
           const oaRes = await fetch("https://api.line.me/v2/bot/message/push", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `Bearer ${channelAccessToken}`
+              "Authorization": `Bearer ${effectiveLineOAToken}`
             },
             body: JSON.stringify({
-              to: userId,
+              to: effectiveLineUserId,
               messages: [
                 {
                   type: "text",

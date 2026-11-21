@@ -35,7 +35,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   cmOnCallSpreadsheetId: '19c9vJhO4qMdCP1O7rwWP_aUZyTqQrTwnzWWxtH7zDdE',
   lineConfig: {
     channelAccessToken: '',
-    userId: '',
+    userId: 'U6299f07e82be6a58c5d5342d281bf156',
     notifyToken: '',
     isEnabled: true
   },
@@ -233,6 +233,12 @@ export default function App() {
           spreadsheetId: parsed.spreadsheetId || DEFAULT_SETTINGS.spreadsheetId,
           pmSpreadsheetId: parsed.pmSpreadsheetId || DEFAULT_SETTINGS.pmSpreadsheetId,
           cmOnCallSpreadsheetId: parsed.cmOnCallSpreadsheetId || DEFAULT_SETTINGS.cmOnCallSpreadsheetId,
+          lineConfig: {
+            ...DEFAULT_SETTINGS.lineConfig,
+            ...(parsed.lineConfig || {}),
+            userId: (parsed.lineConfig?.userId || '').trim() || DEFAULT_SETTINGS.lineConfig.userId,
+            isEnabled: parsed.lineConfig?.isEnabled !== false
+          },
           engineers: mergedEngineers,
           hospitals: mergedHospitals,
           equipments: mergedEquipments,
@@ -509,6 +515,7 @@ export default function App() {
       },
       body: JSON.stringify({ 
         message: textMessage,
+        enableLineOA: lineEnabled,
         notifyToken: lineEnabled ? settings.lineConfig?.notifyToken : '',
         channelAccessToken: lineEnabled ? settings.lineConfig?.channelAccessToken : '',
         userId: lineEnabled ? settings.lineConfig?.userId : ''
@@ -516,7 +523,7 @@ export default function App() {
     })
     .then(res => res.json())
     .then(data => {
-      if (data.errors && data.errors.length > 0 && !data.telegramSuccess) {
+      if (data.errors && data.errors.length > 0 && !data.telegramSuccess && !data.lineOASuccess) {
         console.warn("Notification warnings:", data.errors);
       }
     })
@@ -559,6 +566,7 @@ export default function App() {
       },
       body: JSON.stringify({ 
         message: textMessage,
+        enableLineOA: lineEnabled,
         notifyToken: lineEnabled ? settings.lineConfig?.notifyToken : '',
         channelAccessToken: lineEnabled ? settings.lineConfig?.channelAccessToken : '',
         userId: lineEnabled ? settings.lineConfig?.userId : ''
@@ -566,7 +574,7 @@ export default function App() {
     })
     .then(res => res.json())
     .then(data => {
-      if (data.errors && data.errors.length > 0 && !data.telegramSuccess) {
+      if (data.errors && data.errors.length > 0 && !data.telegramSuccess && !data.lineOASuccess) {
         console.warn("Notification warnings:", data.errors);
       }
     })
