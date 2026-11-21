@@ -129,9 +129,9 @@ export default function App() {
     'engineer-availability': 'Engineer Availability',
     'form': 'New Job Entry',
     'tracker': 'Active Job Tracker',
-    'cm-status': 'CM Status Board',
-    'cm-oncall': 'CM On Call',
-    'dispatch-calendar': 'WorkServicePlan',
+    'cm-status': 'CM Record',
+    'cm-oncall': 'CM Record Warranty',
+    'dispatch-calendar': 'Work Plan',
     'pm-schedule': 'PM Schedule',
     'pm-service': 'PM Service Tasks',
     'hospital-map': 'Hospital Map (แผนที่เครื่อง)',
@@ -165,14 +165,14 @@ export default function App() {
       items: [
         { id: 'form', label: 'เปิดงานใหม่ (New Job)', icon: <FormInput className="w-5 h-5" />, accentClass: 'text-blue-600 bg-blue-50', clearPrefill: true },
         { id: 'tracker', label: 'ติดตามงาน (Tracker)', icon: <ListTodo className="w-5 h-5" />, accentClass: 'text-indigo-600 bg-indigo-50' },
-        { id: 'cm-status', label: 'CM Status Board', icon: <Wrench className="w-5 h-5" />, accentClass: 'text-amber-600 bg-amber-50' },
-        { id: 'cm-oncall', label: 'CM On Call', icon: <PhoneCall className="w-5 h-5" />, accentClass: 'text-rose-600 bg-rose-50' },
+        { id: 'cm-status', label: 'CM Record', icon: <Wrench className="w-5 h-5" />, accentClass: 'text-amber-600 bg-amber-50' },
+        { id: 'cm-oncall', label: 'CM Record Warranty', icon: <PhoneCall className="w-5 h-5" />, accentClass: 'text-rose-600 bg-rose-50' },
       ],
     },
     {
       title: 'แผนงาน PM และแผนที่',
       items: [
-        { id: 'dispatch-calendar', label: 'WorkServicePlan', icon: <CalendarDays className="w-5 h-5" />, accentClass: 'text-indigo-600 bg-indigo-50' },
+        { id: 'dispatch-calendar', label: 'Work Plan', icon: <CalendarDays className="w-5 h-5" />, accentClass: 'text-indigo-600 bg-indigo-50' },
         { id: 'pm-schedule', label: 'PM Schedule', icon: <CalendarDays className="w-5 h-5" />, accentClass: 'text-cyan-600 bg-cyan-50' },
         { id: 'pm-service', label: 'PM Service Tasks', icon: <ClipboardList className="w-5 h-5" />, accentClass: 'text-violet-600 bg-violet-50' },
         { id: 'hospital-map', label: 'แผนที่โรงพยาบาล', icon: <MapPin className="w-5 h-5" />, accentClass: 'text-rose-600 bg-rose-50' },
@@ -786,7 +786,7 @@ export default function App() {
               }`}
             >
               <Wrench className="w-4 h-4 shrink-0" />
-              <span>CM Status Board</span>
+              <span>CM Record</span>
             </button>
             
             <button
@@ -798,7 +798,7 @@ export default function App() {
               }`}
             >
               <PhoneCall className="w-4 h-4 shrink-0" />
-              <span>CM On Call</span>
+              <span>CM Record Warranty</span>
             </button>
 
             <button
@@ -834,7 +834,7 @@ export default function App() {
               }`}
             >
               <CalendarDays className="w-4 h-4 shrink-0" />
-              <span>WorkServicePlan</span>
+              <span>Work Plan</span>
             </button>
 
             <button

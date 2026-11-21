@@ -213,7 +213,7 @@ export default function CMOnCallServiceView({ settings, accessToken, onNotifyLin
       <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-white rounded shadow-sm border border-slate-200">
         <AlertCircle className="w-12 h-12 text-slate-300 mb-4" />
         <h2 className="text-lg font-bold text-slate-700">Database Not Connected</h2>
-        <p className="text-sm text-slate-500 mt-2 max-w-sm">Please connect a Google Spreadsheet in the settings to use the CM Status feature.</p>
+        <p className="text-sm text-slate-500 mt-2 max-w-sm">Please connect a Google Spreadsheet in the settings to use the CM Record Warranty feature.</p>
       </div>
     );
   }
@@ -222,7 +222,7 @@ export default function CMOnCallServiceView({ settings, accessToken, onNotifyLin
     <div className="h-full flex flex-col bg-slate-50 relative">
       <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between shrink-0">
         <div>
-          <h1 className="font-bold text-slate-800">CM On Call (งานแจ้งซ่อม Warranty)</h1>
+          <h1 className="font-bold text-slate-800">CM Record Warranty (งานแจ้งซ่อม Warranty)</h1>
           <p className="text-xs text-slate-500">Track corrective maintenance requests and statuses.</p>
         </div>
         <div className="flex gap-2">

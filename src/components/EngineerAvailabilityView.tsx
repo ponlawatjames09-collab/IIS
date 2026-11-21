@@ -679,7 +679,7 @@ export default function EngineerAvailabilityView({
                       <div className="flex items-center justify-between mb-1.5">
                         <span className="font-bold text-[11px] text-amber-800 flex items-center gap-1.5 uppercase tracking-wide">
                           <PhoneCall className="w-3.5 h-3.5 text-amber-600" />
-                          Active CM On-Call ({eng.activeCMOnCall.length})
+                          Active CM Record Warranty ({eng.activeCMOnCall.length})
                         </span>
                         {onNavigateToTab && (
                           <button

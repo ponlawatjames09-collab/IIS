@@ -701,12 +701,12 @@ export const fetchCMStatusRecords = async (
   spreadsheetId: string,
   accessToken: string
 ): Promise<import('./types').CMStatusRecord[]> => {
-  const res = await sheetsGetValues(spreadsheetId, "'DATABASE TARGET'!A2:K", accessToken);
+  const res = await sheetsGetValues(spreadsheetId, "'CM Record'!A2:K", accessToken);
   if (!res.ok) {
     if (res.status === 400 || res.status === 404) {
       let tabs: string[] = [];
       try { tabs = await fetchSpreadsheetTabs(spreadsheetId, accessToken); } catch {}
-      throw new Error("Tab 'DATABASE TARGET' not found. Available tabs in this sheet are: " + tabs.join(", ") + (res.error ? `. Details: ${res.error}` : ''));
+      throw new Error("Tab 'CM Record' not found. Available tabs in this sheet are: " + tabs.join(", ") + (res.error ? `. Details: ${res.error}` : ''));
     }
     throw new Error(`Failed to fetch CMStatus records. ${res.error || `Code: ${res.status}`}`);
   }
@@ -755,18 +755,18 @@ export const appendCMStatusRecord = async (
     ]
   ];
 
-  let res = await sheetsAppendValues(spreadsheetId, "'DATABASE TARGET'!A1", values, accessToken);
+  let res = await sheetsAppendValues(spreadsheetId, "'CM Record'!A1", values, accessToken);
 
   if (!res.ok && (res.status === 400 || res.status === 404)) {
-    const createSheetRes = await sheetsAddSheet(spreadsheetId, 'DATABASE TARGET', accessToken);
+    const createSheetRes = await sheetsAddSheet(spreadsheetId, 'CM Record', accessToken);
     if (createSheetRes.ok) {
       await sheetsUpdateValues(
         spreadsheetId,
-        "'DATABASE TARGET'!A1:K1",
+        "'CM Record'!A1:K1",
         [["Hospital", "Contact Name", "Contact Phone", "Equipment", "Problem", "Image URL", "Status", "Warranty", "Report Date", "Engineer", "Serial Number"]],
         accessToken
       );
-      res = await sheetsAppendValues(spreadsheetId, "'DATABASE TARGET'!A1", values, accessToken);
+      res = await sheetsAppendValues(spreadsheetId, "'CM Record'!A1", values, accessToken);
     }
   }
 
@@ -796,7 +796,7 @@ export const updateCMStatusRecord = async (
       record.serialNumber || ""
     ]
   ];
-  const res = await sheetsUpdateValues(spreadsheetId, `'DATABASE TARGET'!A${rowIndex}:K${rowIndex}`, values, accessToken);
+  const res = await sheetsUpdateValues(spreadsheetId, `'CM Record'!A${rowIndex}:K${rowIndex}`, values, accessToken);
   if (!res.ok) {
     throw new Error(`Failed to update CMStatus record. ${res.error || `Code: ${res.status}`}`);
   }
@@ -994,12 +994,12 @@ export const fetchCMOnCallRecords = async (
   spreadsheetId: string,
   accessToken: string
 ): Promise<import('./types').CMStatusRecord[]> => {
-  const res = await sheetsGetValues(spreadsheetId, "'DATABASE TARGET USER'!A2:M", accessToken);
+  const res = await sheetsGetValues(spreadsheetId, "'CM Record Warranty'!A2:M", accessToken);
   if (!res.ok) {
     if (res.status === 400 || res.status === 404) {
       let tabs: string[] = [];
       try { tabs = await fetchSpreadsheetTabs(spreadsheetId, accessToken); } catch {}
-      throw new Error("Tab 'DATABASE TARGET USER' not found. Available tabs in this sheet are: " + tabs.join(", ") + (res.error ? `. Details: ${res.error}` : ''));
+      throw new Error("Tab 'CM Record Warranty' not found. Available tabs in this sheet are: " + tabs.join(", ") + (res.error ? `. Details: ${res.error}` : ''));
     }
     throw new Error(`Failed to fetch CMOnCall records. ${res.error || `Code: ${res.status}`}`);
   }
@@ -1050,17 +1050,17 @@ export const appendCMOnCallRecord = async (
     ]
   ];
 
-  let res = await sheetsAppendValues(spreadsheetId, "'DATABASE TARGET USER'!A1", values, accessToken);
+  let res = await sheetsAppendValues(spreadsheetId, "'CM Record Warranty'!A1", values, accessToken);
   if (!res.ok && (res.status === 400 || res.status === 404)) {
-    const createSheetRes = await sheetsAddSheet(spreadsheetId, 'DATABASE TARGET USER', accessToken);
+    const createSheetRes = await sheetsAddSheet(spreadsheetId, 'CM Record Warranty', accessToken);
     if (createSheetRes.ok) {
       await sheetsUpdateValues(
         spreadsheetId,
-        "'DATABASE TARGET USER'!A1:M1",
+        "'CM Record Warranty'!A1:M1",
         [["Hospital", "Contact Name", "Contact Phone", "Equipment", "Problem", "Image URL", "Status", "Warranty", "Report Date", "Engineer", "Serial Number", "IB Date", "Expiry Date"]],
         accessToken
       );
-      res = await sheetsAppendValues(spreadsheetId, "'DATABASE TARGET USER'!A1", values, accessToken);
+      res = await sheetsAppendValues(spreadsheetId, "'CM Record Warranty'!A1", values, accessToken);
     }
   }
   if (!res.ok) {
@@ -1094,7 +1094,7 @@ export const updateCMOnCallRecord = async (
       record.expiryDate || ''
     ]
   ];
-  const res = await sheetsUpdateValues(spreadsheetId, `'DATABASE TARGET USER'!A${rowIndex}:M${rowIndex}`, values, accessToken);
+  const res = await sheetsUpdateValues(spreadsheetId, `'CM Record Warranty'!A${rowIndex}:M${rowIndex}`, values, accessToken);
   if (!res.ok) {
     throw new Error(`Failed to update CMOnCall record. ${res.error || `Code: ${res.status}`}`);
   }
@@ -1214,9 +1214,9 @@ export const updateQuotationWinRate = async (
 
 // ---------------- Dispatch Schedule ---------------- //
 export const fetchDispatchRecords = async (spreadsheetId: string, accessToken: string): Promise<import('./types').DispatchRecord[]> => {
-  const sheetName = 'WorkServicePlan';
+  const sheetName = 'Work Plan';
   try {
-    const res = await sheetsGetValues(spreadsheetId, `${sheetName}!A2:G`, accessToken);
+    const res = await sheetsGetValues(spreadsheetId, `'${sheetName}'!A2:G`, accessToken);
     if (!res.ok) {
       console.warn('Could not fetch Dispatch records, status:', res.status);
       return [];
@@ -1240,7 +1240,7 @@ export const fetchDispatchRecords = async (spreadsheetId: string, accessToken: s
 };
 
 export const appendDispatchRecord = async (spreadsheetId: string, accessToken: string, record: import('./types').DispatchRecord): Promise<void> => {
-  const sheetName = 'WorkServicePlan';
+  const sheetName = 'Work Plan';
   try {
     const metaData = await sheetsGetMeta(spreadsheetId, accessToken);
     const existingSheetTitles = (metaData.sheets || []).map((s: any) => s.properties.title);
@@ -1248,7 +1248,7 @@ export const appendDispatchRecord = async (spreadsheetId: string, accessToken: s
       await sheetsAddSheet(spreadsheetId, sheetName, accessToken);
       await sheetsUpdateValues(
         spreadsheetId,
-        `${sheetName}!A1:G1`,
+        `'${sheetName}'!A1:G1`,
         [['ID', 'Date', 'Engineer', 'Task', 'Location', 'Remark', 'Status']],
         accessToken
       );
@@ -1258,15 +1258,15 @@ export const appendDispatchRecord = async (spreadsheetId: string, accessToken: s
   }
 
   const values = [[record.id, record.date, record.engineer, record.taskTitle, record.location, record.remark, record.status]];
-  const res = await sheetsAppendValues(spreadsheetId, `${sheetName}!A1`, values, accessToken);
+  const res = await sheetsAppendValues(spreadsheetId, `'${sheetName}'!A1`, values, accessToken);
   if (!res.ok) {
     throw new Error(res.error || 'Failed to save dispatch record');
   }
 };
 
 export const deleteDispatchRecord = async (spreadsheetId: string, accessToken: string, rowIndex: number): Promise<void> => {
-  const sheetName = 'WorkServicePlan';
-  const range = `${sheetName}!A${rowIndex}:G${rowIndex}`;
+  const sheetName = 'Work Plan';
+  const range = `'${sheetName}'!A${rowIndex}:G${rowIndex}`;
   const values = [['', '', '', '', '', '', '']];
   const res = await sheetsUpdateValues(spreadsheetId, range, values, accessToken);
   if (!res.ok) {
@@ -1276,8 +1276,8 @@ export const deleteDispatchRecord = async (spreadsheetId: string, accessToken: s
 
 export const updateDispatchRecord = async (spreadsheetId: string, accessToken: string, record: import('./types').DispatchRecord): Promise<void> => {
   if (!record.rowIndex) return;
-  const sheetName = 'WorkServicePlan';
-  const range = `${sheetName}!A${record.rowIndex}:G${record.rowIndex}`;
+  const sheetName = 'Work Plan';
+  const range = `'${sheetName}'!A${record.rowIndex}:G${record.rowIndex}`;
   const values = [[record.id, record.date, record.engineer, record.taskTitle, record.location, record.remark, record.status]];
   const res = await sheetsUpdateValues(spreadsheetId, range, values, accessToken);
   if (!res.ok) {

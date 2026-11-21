@@ -453,8 +453,8 @@ export default function ServiceReportDashboard({
 
     // 2B. CM Status Board + CM On Call Records
     const combinedBoardRaw = [
-      ...(cmBoardSourceFilter === 'CMOnCall' ? [] : cmStatusList.map(r => ({ ...r, boardSource: 'CM Status Board' }))),
-      ...(cmBoardSourceFilter === 'CMStatus' ? [] : cmOnCallList.map(r => ({ ...r, boardSource: 'CM On Call' })))
+      ...(cmBoardSourceFilter === 'CMOnCall' ? [] : cmStatusList.map(r => ({ ...r, boardSource: 'CM Record' }))),
+      ...(cmBoardSourceFilter === 'CMStatus' ? [] : cmOnCallList.map(r => ({ ...r, boardSource: 'CM Record Warranty' })))
     ];
 
     const filteredBoardRecords = combinedBoardRaw.filter(r => {
@@ -968,7 +968,7 @@ export default function ServiceReportDashboard({
 
     // Sheet 3: CM Status Breakdown
     const cmStatusSheetData = cmReport.boardStatusBreakdown.map(st => ({
-      'สถานะ (CM Status Board)': st.label,
+      'สถานะ (CM Record)': st.label,
       'จำนวนงาน (งาน)': st.count,
       'สัดส่วน (%)': `${st.percentage}%`
     }));
@@ -1402,19 +1402,19 @@ export default function ServiceReportDashboard({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200">
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                02. รายงานสรุปงานซ่อมฉุกเฉิน CM (ทั้งที่เปิด Job Number และแจ้งซ่อมใน CM Status Board)
+                02. รายงานสรุปงานซ่อมฉุกเฉิน CM (ทั้งที่เปิด Job Number และแจ้งซ่อมใน CM Record)
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 แยกตามแหล่งที่มาของงานซ่อม และแจกแจงสถานะงานในบอร์ด (Repair Request, In Progress, Waiting for Claim, Waiting for Replacement, Submit a Price, Submit the Invoice, Closed)
               </p>
             </div>
 
-            {/* Source filter for CM Status Board */}
+            {/* Source filter for CM Record */}
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-md border border-slate-200 shrink-0">
               {[
                 { id: 'All', label: 'รวมทุกบอร์ด CM' },
-                { id: 'CMStatus', label: `CM Status (${cmReport.cmStatusCount})` },
-                { id: 'CMOnCall', label: `CM On Call (${cmReport.cmOnCallCount})` }
+                { id: 'CMStatus', label: `CM Record (${cmReport.cmStatusCount})` },
+                { id: 'CMOnCall', label: `CM Record Warranty (${cmReport.cmOnCallCount})` }
               ].map(btn => (
                 <button
                   key={btn.id}
@@ -1475,7 +1475,7 @@ export default function ServiceReportDashboard({
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs font-bold uppercase tracking-wider text-orange-700">
-                    ส่วนที่ 2: งานแจ้งซ่อมในหน้า CM Status Board
+                    ส่วนที่ 2: งานแจ้งซ่อมในหน้า CM Record
                   </span>
                   <h3 className="text-sm font-bold text-slate-800 mt-0.5">
                     รายการแจ้งซ่อมและติดตามสถานะอะไหล่/ใบเสนอราคา
@@ -1529,7 +1529,7 @@ export default function ServiceReportDashboard({
           {/* Detailed Status Breakdown Cards (8 Exact Statuses) */}
           <div>
             <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
-              สรุปจำนวนงานแจ้งซ่อมแยกตามสถานะใน CM Status Board
+              สรุปจำนวนงานแจ้งซ่อมแยกตามสถานะใน CM Record
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
               {cmReport.boardStatusBreakdown.map(st => (

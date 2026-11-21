@@ -274,7 +274,7 @@ export default function Settings({
     try {
       await syncServerBridgeConfig({ cmOnCallSpreadsheetId: cleanId });
     } catch {}
-    setSpreadsheetSuccess("CM On Call Spreadsheet ID saved and synced!");
+    setSpreadsheetSuccess("CM Record Warranty Spreadsheet ID saved and synced!");
   };
 
   const handleAutoCreateSpreadsheet = async () => {
@@ -703,7 +703,7 @@ export default function Settings({
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 mt-3">Secondary Spreadsheet ID (For PM Schedule / CM Status Board)</label>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 mt-3">Secondary Spreadsheet ID (For PM Schedule / CM Record)</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -722,13 +722,13 @@ export default function Settings({
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 mt-3">CM On Call Spreadsheet ID (DATABASE TARGET USER)</label>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 mt-3">CM Record Warranty Spreadsheet ID (All QR Code Service)</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={cmOnCallSpreadsheetInput}
                     onChange={(e) => setCmOnCallSpreadsheetInput(e.target.value)}
-                    placeholder="CM On Call Sheet ID"
+                    placeholder="CM Record Warranty Sheet ID"
                     className="flex-1 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded text-slate-800 placeholder-slate-400 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
                   />
                   <button

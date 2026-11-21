@@ -1213,7 +1213,7 @@ export default function Dashboard({ jobs: rawJobs, yearlyJobs: rawYearlyJobs, se
       <div className="bg-white rounded border border-slate-200 p-4 mt-4 mb-8 shadow-sm">
         <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-100">
           <Activity className="w-5 h-5 text-rose-500" />
-          <h2 className="font-bold text-sm text-slate-800 uppercase tracking-wider">CM On Call Overview (Warranty)</h2>
+          <h2 className="font-bold text-sm text-slate-800 uppercase tracking-wider">CM Record Warranty Overview</h2>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 flex flex-col gap-4">
@@ -1256,7 +1256,7 @@ export default function Dashboard({ jobs: rawJobs, yearlyJobs: rawYearlyJobs, se
                 );
               })}
               {Object.keys(cmOnCallMetrics.byStatus).length === 0 && (
-                <div className="col-span-full text-xs text-slate-400 py-4 text-center">No CM On Call records found.</div>
+                <div className="col-span-full text-xs text-slate-400 py-4 text-center">No CM Record Warranty records found.</div>
               )}
             </div>
           </div>
