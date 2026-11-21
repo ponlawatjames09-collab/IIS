@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { Activity, LayoutDashboard, Users, UserCheck, FileSpreadsheet, ClipboardList, Settings as SettingsIcon, LogOut, Database, AlertCircle, Sparkles, RefreshCw, ChevronDown, CheckCircle2, CalendarDays, FormInput, ListTodo, Wrench, PhoneCall, DollarSign, FileText, TrendingUp, MapPin, Link2 } from 'lucide-react';
+import { Activity, LayoutDashboard, Users, UserCheck, FileSpreadsheet, ClipboardList, Settings as SettingsIcon, LogOut, Database, AlertCircle, Sparkles, RefreshCw, ChevronDown, CheckCircle2, CalendarDays, FormInput, ListTodo, Wrench, PhoneCall, DollarSign, FileText, TrendingUp, MapPin, Link2, Menu, X, LayoutGrid, PlusCircle } from 'lucide-react';
 import { initAuth, googleSignIn, handleSignOut, getAccessToken } from './firebase';
 import { ServiceJob, SystemSettings, CMStatusRecord } from './types';
 import { fetchMonthlyJobs, fetchYearlyJobs, appendJobToSheet, updateJobInSheet, generateNextJobNumber, MONTHS } from './sheetsService';
@@ -110,7 +110,84 @@ export default function App() {
   const [bridgeEndpointError, setBridgeEndpointError] = useState<string | null>(null);
 
   // App tab navigation state
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'service-report' | 'today-operations' | 'engineer-availability' | 'form' | 'tracker' | 'billing' | 'settings' | 'cm-status' | 'cm-oncall' | 'pm-schedule' | 'quotation-reader' | 'quotation-dashboard' | 'dispatch-calendar' | 'pm-service' | 'hospital-map'>('dashboard');
+  type AppTab = 'dashboard' | 'service-report' | 'today-operations' | 'engineer-availability' | 'form' | 'tracker' | 'billing' | 'settings' | 'cm-status' | 'cm-oncall' | 'pm-schedule' | 'quotation-reader' | 'quotation-dashboard' | 'dispatch-calendar' | 'pm-service' | 'hospital-map';
+  const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const navigateToTab = (tab: AppTab, options?: { clearPrefill?: boolean }) => {
+    setEditingJob(null);
+    setEditingJobIndex(null);
+    if (options?.clearPrefill) setPrefillPMData(undefined);
+    setActiveTab(tab);
+    setIsMobileMenuOpen(false);
+  };
+
+  const TAB_TITLES: Record<AppTab, string> = {
+    'dashboard': 'Dashboard Overview',
+    'service-report': 'Service Report (สรุปงานช่าง)',
+    'today-operations': "Today's Operations",
+    'engineer-availability': 'Engineer Availability',
+    'form': 'New Job Entry',
+    'tracker': 'Active Job Tracker',
+    'cm-status': 'CM Status Board',
+    'cm-oncall': 'CM On Call',
+    'dispatch-calendar': 'WorkServicePlan',
+    'pm-schedule': 'PM Schedule',
+    'pm-service': 'PM Service Tasks',
+    'hospital-map': 'Hospital Map (แผนที่เครื่อง)',
+    'billing': 'Billing Summary',
+    'quotation-reader': 'Quotation Reader',
+    'quotation-dashboard': 'Quotation Dashboard',
+    'settings': 'System Connections',
+  };
+
+  const MOBILE_MENU_GROUPS: Array<{
+    title: string;
+    items: Array<{
+      id: AppTab;
+      label: string;
+      icon: React.ReactNode;
+      accentClass: string;
+      clearPrefill?: boolean;
+    }>;
+  }> = [
+    {
+      title: 'ภาพรวมและรายงาน',
+      items: [
+        { id: 'dashboard', label: 'Dashboard Overview', icon: <LayoutDashboard className="w-5 h-5" />, accentClass: 'text-blue-600 bg-blue-50' },
+        { id: 'service-report', label: 'สรุปงานช่าง (Report)', icon: <FileSpreadsheet className="w-5 h-5" />, accentClass: 'text-emerald-600 bg-emerald-50' },
+        { id: 'today-operations', label: 'งานวันนี้ (Today)', icon: <Users className="w-5 h-5" />, accentClass: 'text-sky-600 bg-sky-50' },
+        { id: 'engineer-availability', label: 'สถานะช่าง (Duty)', icon: <UserCheck className="w-5 h-5" />, accentClass: 'text-teal-600 bg-teal-50' },
+      ],
+    },
+    {
+      title: 'บันทึกและติดตามงานบริการ',
+      items: [
+        { id: 'form', label: 'เปิดงานใหม่ (New Job)', icon: <FormInput className="w-5 h-5" />, accentClass: 'text-blue-600 bg-blue-50', clearPrefill: true },
+        { id: 'tracker', label: 'ติดตามงาน (Tracker)', icon: <ListTodo className="w-5 h-5" />, accentClass: 'text-indigo-600 bg-indigo-50' },
+        { id: 'cm-status', label: 'CM Status Board', icon: <Wrench className="w-5 h-5" />, accentClass: 'text-amber-600 bg-amber-50' },
+        { id: 'cm-oncall', label: 'CM On Call', icon: <PhoneCall className="w-5 h-5" />, accentClass: 'text-rose-600 bg-rose-50' },
+      ],
+    },
+    {
+      title: 'แผนงาน PM และแผนที่',
+      items: [
+        { id: 'dispatch-calendar', label: 'WorkServicePlan', icon: <CalendarDays className="w-5 h-5" />, accentClass: 'text-indigo-600 bg-indigo-50' },
+        { id: 'pm-schedule', label: 'PM Schedule', icon: <CalendarDays className="w-5 h-5" />, accentClass: 'text-cyan-600 bg-cyan-50' },
+        { id: 'pm-service', label: 'PM Service Tasks', icon: <ClipboardList className="w-5 h-5" />, accentClass: 'text-violet-600 bg-violet-50' },
+        { id: 'hospital-map', label: 'แผนที่โรงพยาบาล', icon: <MapPin className="w-5 h-5" />, accentClass: 'text-rose-600 bg-rose-50' },
+      ],
+    },
+    {
+      title: 'การเงิน เอกสาร และระบบ',
+      items: [
+        { id: 'billing', label: 'Billing Summary', icon: <DollarSign className="w-5 h-5" />, accentClass: 'text-emerald-600 bg-emerald-50' },
+        { id: 'quotation-reader', label: 'อ่านใบเสนอราคา', icon: <FileText className="w-5 h-5" />, accentClass: 'text-indigo-600 bg-indigo-50' },
+        { id: 'quotation-dashboard', label: 'สรุปใบเสนอราคา', icon: <TrendingUp className="w-5 h-5" />, accentClass: 'text-purple-600 bg-purple-50' },
+        { id: 'settings', label: 'ตั้งค่าการเชื่อมต่อ', icon: <SettingsIcon className="w-5 h-5" />, accentClass: 'text-slate-700 bg-slate-100' },
+      ],
+    },
+  ];
 
   // Loaded jobs database
   const [jobs, setJobs] = useState<ServiceJob[]>([]);
@@ -609,7 +686,7 @@ export default function App() {
   };
 
   return (
-    <div id="app-shell" className="h-screen bg-slate-950 flex font-sans overflow-hidden">
+    <div id="app-shell" className="h-dvh bg-slate-950 flex font-sans overflow-hidden">
       
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden md:flex w-64 bg-slate-900 border-r border-slate-800 flex-col shrink-0">
@@ -850,13 +927,39 @@ export default function App() {
 
         {/* SCROLLABLE MAIN CANVAS */}
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50">
+
+          {/* MOBILE TOP APP BAR */}
+          <header className="md:hidden h-12 bg-slate-900 text-white border-b border-slate-800 px-2 flex items-center justify-between gap-2 shrink-0 z-30">
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(true)}
+              aria-label="เปิดเมนูทั้งหมด"
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-slate-200 hover:bg-slate-800 active:bg-slate-700 transition-colors cursor-pointer shrink-0"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+
+            <div className="min-w-0 flex-1 text-center">
+              <div className="text-[10px] font-medium text-slate-400 leading-none truncate">IIS Service Portal</div>
+              <div className="text-sm font-bold text-slate-100 leading-tight truncate mt-0.5">{TAB_TITLES[activeTab]}</div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => { loadJobs(); loadYearlyJobs(); }}
+              aria-label="ซิงค์ข้อมูล Google Sheets"
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-slate-200 hover:bg-slate-800 active:bg-slate-700 transition-colors cursor-pointer shrink-0"
+            >
+              <RefreshCw className={`w-4 h-4 ${isFetchingJobs ? 'animate-spin text-blue-400' : ''}`} />
+            </button>
+          </header>
           
           {/* Connection Notice Banner */}
           {(!effectiveToken || !settings.spreadsheetId) && !isInitializing && (
-            <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-amber-800 text-xs font-medium flex items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-2">
+            <div className="bg-amber-50 border-b border-amber-200 px-3 md:px-4 py-2 text-amber-800 text-xs font-medium flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
                 <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>
+                <span className="line-clamp-2 md:line-clamp-none">
                   {!effectiveToken ? (
                     bridgeEndpointError ? (
                       <><strong>เชื่อมต่อ Backend API บนเซิร์ฟเวอร์ไม่สำเร็จ:</strong> {bridgeEndpointError}</>
@@ -869,8 +972,8 @@ export default function App() {
                 </span>
               </div>
               <button
-                onClick={() => setActiveTab('settings')}
-                className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wider cursor-pointer transition-colors shrink-0"
+                onClick={() => navigateToTab('settings')}
+                className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1.5 rounded font-bold text-[10px] uppercase tracking-wider cursor-pointer transition-colors shrink-0 whitespace-nowrap"
               >
                 {!effectiveToken ? 'Setup Bridge' : 'Connect Database'}
               </button>
@@ -879,13 +982,13 @@ export default function App() {
 
           {/* Quick Tab Header / Actions Bar */}
           {settings.spreadsheetId && (
-            <div className="bg-white border-b border-slate-200 px-4 py-1.5 flex items-center justify-between text-slate-500 text-xs shrink-0 select-none">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-slate-600 uppercase text-[10px]">Database Target:</span>
+            <div className="bg-white border-b border-slate-200 px-3 md:px-4 py-1.5 flex items-center justify-between gap-2 text-slate-500 text-xs shrink-0 select-none">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-bold text-slate-600 uppercase text-[10px] whitespace-nowrap">Database:</span>
                 <select
                   value={activeMonthYear}
                   onChange={(e) => setActiveMonthYear(e.target.value)}
-                  className="bg-slate-100 border border-slate-300 hover:bg-slate-200 text-slate-800 font-bold text-xs py-0.5 px-1.5 rounded cursor-pointer transition-all focus:outline-none"
+                  className="bg-slate-100 border border-slate-300 hover:bg-slate-200 text-slate-800 font-bold text-xs py-1 px-2 rounded cursor-pointer transition-all focus:outline-none min-h-[32px]"
                 >
                   <option value="YEARLY2026">Overview (2026)</option>
                   {MONTHS.map(m => (
@@ -894,28 +997,33 @@ export default function App() {
                 </select>
               </div>
 
-              <div className="flex items-center gap-4">
-                {isFetchingJobs ? (
-                  <div className="flex items-center gap-1.5 text-blue-600 font-mono text-[11px] font-bold">
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                    <span>Syncing Sheet...</span>
-                  </div>
-                ) : (
-                  <button
-                    onClick={loadJobs}
-                    className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 font-semibold cursor-pointer transition-colors"
-                    title="Reload current month spreadsheet records"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>Reload Sheets</span>
-                  </button>
-                )}
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="md:hidden text-[11px] font-medium text-slate-500 whitespace-nowrap">
+                  {isFetchingJobs ? 'กำลังซิงค์...' : `${jobs.length} รายการ`}
+                </span>
+                <div className="hidden md:flex items-center gap-4">
+                  {isFetchingJobs ? (
+                    <div className="flex items-center gap-1.5 text-blue-600 font-mono text-[11px] font-bold">
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      <span>Syncing Sheet...</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={loadJobs}
+                      className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 font-semibold cursor-pointer transition-colors"
+                      title="Reload current month spreadsheet records"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Reload Sheets</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
 
           {fetchError && (
-            <div className="mx-4 mt-3 p-3 bg-red-50 border border-red-200 rounded-md text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3 shrink-0">
+            <div className="mx-3 md:mx-4 mt-3 p-3 bg-red-50 border border-red-200 rounded-md text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3 shrink-0">
               <div className="flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                 <div>
@@ -935,7 +1043,7 @@ export default function App() {
                   ลองเชื่อมต่อใหม่
                 </button>
                 <button
-                  onClick={() => setActiveTab('settings')}
+                  onClick={() => navigateToTab('settings')}
                   className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded text-[11px] cursor-pointer transition-colors"
                 >
                   เปิดหน้า System Connections
@@ -945,7 +1053,7 @@ export default function App() {
           )}
 
           {/* CONTENT COMPARTMENT */}
-          <div className="flex-1 overflow-y-auto pl-3 pt-3 pb-3 md:pl-4 md:pt-4 md:pb-4 pr-0 w-full">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 md:p-4 w-full">
             
             {activeTab === 'dashboard' && (
               <Dashboard 
@@ -1161,64 +1269,149 @@ export default function App() {
         </div>
       </footer>
 
-      {/* MOBILE BOTTOM NAVIGATION */}
-      <div className="md:hidden flex h-[60px] bg-slate-900 border-t border-slate-800 text-slate-400 text-[10px] shrink-0 justify-around items-center pb-0 z-50">
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('dashboard'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'dashboard' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <LayoutDashboard className="w-5 h-5" />
-          <span>Dashboard</span>
-        </button>
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('service-report'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'service-report' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
-          <span>Report</span>
-        </button>
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('today-operations'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'today-operations' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <Users className="w-5 h-5" />
-          <span>Today</span>
-        </button>
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('engineer-availability'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'engineer-availability' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <UserCheck className="w-5 h-5" />
-          <span>Duty</span>
-        </button>
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setPrefillPMData(undefined); setActiveTab('form'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'form' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <FileSpreadsheet className="w-5 h-5" />
-          <span>Log Job</span>
-        </button>
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('tracker'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'tracker' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <ClipboardList className="w-5 h-5" />
-          <span>Tracker</span>
-        </button>
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('cm-status'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'cm-status' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <Activity className="w-5 h-5" />
-          <span>CM Status</span>
-        </button>
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('cm-oncall'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'cm-oncall' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <Activity className="w-5 h-5" />
-          <span>CM On Call</span>
-        </button>
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('pm-schedule'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'pm-schedule' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <CalendarDays className="w-5 h-5" />
-          <span>PM</span>
-        </button>
-        
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('pm-service'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'pm-service' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <ClipboardList className="w-5 h-5" />
-          <span>PM Tasks</span>
+      {/* MOBILE BOTTOM NAVIGATION (5 Thumb-Friendly Tabs) */}
+      <nav
+        aria-label="Mobile navigation"
+        className="md:hidden grid grid-cols-5 bg-slate-900 border-t border-slate-800 text-slate-400 shrink-0 z-40 pb-safe"
+      >
+        <button
+          type="button"
+          onClick={() => navigateToTab('dashboard')}
+          className={`flex flex-col items-center justify-center min-h-[58px] py-1.5 px-1 transition-colors cursor-pointer ${
+            activeTab === 'dashboard' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <LayoutDashboard className="w-5 h-5 shrink-0" />
+          <span className="text-[10px] leading-tight mt-1 whitespace-nowrap">หน้าหลัก</span>
         </button>
 
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('hospital-map'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'hospital-map' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <MapPin className="w-5 h-5 text-rose-400" />
-          <span>Map</span>
+        <button
+          type="button"
+          onClick={() => navigateToTab('tracker')}
+          className={`flex flex-col items-center justify-center min-h-[58px] py-1.5 px-1 transition-colors cursor-pointer ${
+            activeTab === 'tracker' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <ListTodo className="w-5 h-5 shrink-0" />
+          <span className="text-[10px] leading-tight mt-1 whitespace-nowrap">ติดตามงาน</span>
         </button>
 
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('quotation-reader'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'quotation-reader' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <FileText className="w-5 h-5" />
-          <span>Quotation</span>
+        <button
+          type="button"
+          onClick={() => navigateToTab('form', { clearPrefill: true })}
+          className={`flex flex-col items-center justify-center min-h-[58px] py-1 px-1 transition-colors cursor-pointer ${
+            activeTab === 'form' ? 'text-white font-bold' : 'text-slate-200'
+          }`}
+        >
+          <span
+            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-transform active:scale-95 ${
+              activeTab === 'form' ? 'bg-blue-500 text-white shadow-md shadow-blue-500/30' : 'bg-blue-600 text-white'
+            }`}
+          >
+            <PlusCircle className="w-5 h-5 shrink-0" />
+          </span>
+          <span className="text-[10px] leading-tight mt-0.5 whitespace-nowrap">เปิดงาน</span>
         </button>
-        <button onClick={() => { setEditingJob(null); setEditingJobIndex(null); setActiveTab('settings'); }} className={`flex flex-col items-center justify-center gap-1 w-full h-full ${activeTab === 'settings' ? 'text-blue-500 font-bold' : 'hover:text-slate-200'}`}>
-          <SettingsIcon className="w-5 h-5" />
-          <span>Settings</span>
+
+        <button
+          type="button"
+          onClick={() => navigateToTab('service-report')}
+          className={`flex flex-col items-center justify-center min-h-[58px] py-1.5 px-1 transition-colors cursor-pointer ${
+            activeTab === 'service-report' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <FileSpreadsheet className="w-5 h-5 shrink-0" />
+          <span className="text-[10px] leading-tight mt-1 whitespace-nowrap">สรุปงาน</span>
         </button>
-      </div>
+
+        <button
+          type="button"
+          onClick={() => setIsMobileMenuOpen(true)}
+          className={`flex flex-col items-center justify-center min-h-[58px] py-1.5 px-1 transition-colors cursor-pointer ${
+            isMobileMenuOpen || !['dashboard', 'tracker', 'form', 'service-report'].includes(activeTab)
+              ? 'text-blue-400 font-bold'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <LayoutGrid className="w-5 h-5 shrink-0" />
+          <span className="text-[10px] leading-tight mt-1 whitespace-nowrap">เมนูทั้งหมด</span>
+        </button>
+      </nav>
+
+      {/* MOBILE ORGANIZED MENU SHEET */}
+      {isMobileMenuOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-50 flex flex-col justify-end bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setIsMobileMenuOpen(false)}
+        >
+          <div
+            className="bg-white rounded-t-3xl shadow-2xl max-h-[85dvh] flex flex-col overflow-hidden pb-safe"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Drag Handle & Header */}
+            <div className="px-4 pt-2.5 pb-3 border-b border-slate-200 shrink-0">
+              <div className="w-10 h-1.5 bg-slate-300 rounded-full mx-auto mb-2.5" />
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">เมนูระบบทั้งหมด</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {bridgeStatus.mode === 'service_account'
+                      ? 'เชื่อมต่อ Google Sheets อัตโนมัติ (Service Account)'
+                      : isBridgeReady
+                      ? 'เชื่อมต่อผ่าน Apps Script Bridge'
+                      : 'โหมดผู้ดูแลระบบ'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  aria-label="ปิดเมนู"
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-all cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Organized 4-Category Touch Grid */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-5">
+              {MOBILE_MENU_GROUPS.map((group) => (
+                <section key={group.title}>
+                  <h3 className="text-xs font-bold text-slate-500 mb-2.5 px-0.5">{group.title}</h3>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {group.items.map((item) => {
+                      const isActive = activeTab === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => navigateToTab(item.id, { clearPrefill: item.clearPrefill })}
+                          className={`min-h-[54px] px-3 py-2.5 rounded-xl border text-left flex items-center gap-2.5 transition-all active:scale-[0.98] cursor-pointer ${
+                            isActive
+                              ? 'bg-slate-900 border-slate-900 text-white shadow-sm'
+                              : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span
+                            className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                              isActive ? 'bg-white/15 text-white' : item.accentClass
+                            }`}
+                          >
+                            {item.icon}
+                          </span>
+                          <span className="text-xs font-semibold leading-snug line-clamp-2 min-w-0">
+                            {item.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       </main>
 

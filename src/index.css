@@ -71,3 +71,16 @@
 .text-emerald-600-safe { color: #059669 !important; }
 .text-slate-800-safe { color: #1e293b !important; }
 .border-slate-200-safe { border-color: #e2e8f0 !important; }
+
+/* Mobile touch & safe-area ergonomics */
+@layer base {
+  button, a, select {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
